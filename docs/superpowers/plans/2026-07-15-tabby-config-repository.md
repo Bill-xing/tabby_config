@@ -16,6 +16,8 @@
 - Required source commit: `bcec1a38b17f5df544367028d21693f21b225a04`
 - Target repository: `${HOME}/code/tabby_config`
 - Target branch: `main`
+- Execution worktree: `${HOME}/code/tabby_config/.worktrees/tabby-config-implementation`
+- Execution branch: `feature/tabby-config-implementation`
 - Existing target design commit: `d1b1ffa`
 - No Git remote may be added.
 - The source repository must remain clean and at the required commit throughout execution.
@@ -38,7 +40,7 @@
 
 **Files:**
 
-- Create from source: `.gitignore`
+- Preserve from target setup: `.gitignore` containing the source rules plus `.worktrees/`
 - Create from source: `README.md`
 - Create from source: `bootstrap/common.sh`
 - Create from source: `bootstrap/github_release_asset.py`
@@ -91,7 +93,6 @@ Run from `${HOME}/code/tabby_config`:
 
 ~~~bash
 git -C ${HOME}/code/wezterm_config archive HEAD -- \
-  .gitignore \
   README.md \
   bootstrap \
   config/lazygit \
@@ -105,7 +106,7 @@ git -C ${HOME}/code/wezterm_config archive HEAD -- \
   tar -x -C ${HOME}/code/tabby_config
 ~~~
 
-Expected: the listed files appear in the target; `config/wezterm/` does not exist; `docs/superpowers/` and `.git/` remain intact.
+Expected: the listed files appear in the target; `config/wezterm/` does not exist; `docs/superpowers/`, `.gitignore`, and `.git/` remain intact.
 
 - [ ] **Step 3: Verify the mechanical copy and exclusion**
 
@@ -113,6 +114,13 @@ Run:
 
 ~~~bash
 test ! -e config/wezterm/wezterm.lua
+git check-ignore -q .worktrees/
+grep -Fx '.DS_Store' .gitignore
+grep -Fx '.nvimlog' .gitignore
+grep -Fx '*.bak.*' .gitignore
+grep -Fx '__pycache__/' .gitignore
+grep -Fx '*.pyc' .gitignore
+grep -Fx '.worktrees/' .gitignore
 git diff --no-index \
   ${HOME}/code/wezterm_config/config/zsh \
   config/zsh
