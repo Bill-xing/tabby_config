@@ -58,4 +58,17 @@ assert_file_contains \
   "$REPO_ROOT/bootstrap/common.sh" \
   'link_or_copy "$REPO_ROOT/config/tmux-powerline" "$cfg/tmux-powerline"'
 
+README="$REPO_ROOT/README.md"
+SERVER_GUIDE="$REPO_ROOT/docs/server-quickstart.md"
+
+assert_file_contains "$README" 'config/tmux-powerline/config.sh'
+assert_file_contains "$README" 'config/tmux-powerline/themes/minimal.sh'
+assert_file_contains "$README" '${XDG_CONFIG_HOME:-$HOME/.config}/tmux-powerline'
+assert_file_contains "$README" 'session/window/pane'
+assert_file_contains "$README" 'powerline.sh left'
+assert_file_contains "$README" 'powerline.sh right'
+assert_file_contains "$SERVER_GUIDE" '"$HOME/.config/tmux-powerline"'
+assert_file_contains "$SERVER_GUIDE" 'powerline.sh left'
+assert_file_contains "$SERVER_GUIDE" 'powerline.sh right'
+
 printf 'tmux-powerline deployment checks passed\n'

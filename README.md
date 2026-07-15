@@ -20,7 +20,9 @@
 ## 目录结构
 
 - `config/zsh/.zshrc` + `config/zsh/.p10k.zsh`: zsh / oh-my-zsh / powerlevel10k
-- `config/tmux/.tmux.conf`: tmux 主配置，包含 `ikjl` pane 导航、session/window 快捷键、增强状态栏
+- `config/tmux/.tmux.conf`: tmux 主配置，包含 `ikjl` pane 导航和 session/window 快捷键
+- `config/tmux-powerline/config.sh`: tmux-powerline 用户配置，选择仓库内的 `minimal` 主题
+- `config/tmux-powerline/themes/minimal.sh`: 底部 bar 主题，继承锁定插件的窗口格式并裁剪左右 segment
 - `config/nvim/`: LazyVim 配置目录，保留 `lazy-lock.json`
 - `config/lazygit/config.yml`: lazygit 用户配置，当前迁移 `delta` pager
 - `config/yazi/yazi.toml`: yazi 功能配置
@@ -54,7 +56,7 @@ cd /path/to/this/repo
 - Tabby cask: `brew install --cask tabby`
 - 可选 Nerd Font: `font-jetbrains-mono-nerd-font`
 - 固定版本的 `oh-my-zsh` / `powerlevel10k` / zsh 插件 / tmux 插件
-- 当前 dotfiles 到 `~/.zshrc` `~/.p10k.zsh` `~/.tmux.conf` `~/.config/*`；Tabby 配置复制到 `$HOME/Library/Application Support/tabby/config.yaml`
+- 当前 dotfiles 到 `~/.zshrc` `~/.p10k.zsh` `~/.tmux.conf` `~/.config/*`，其中 tmux-powerline 部署到 `${XDG_CONFIG_HOME:-$HOME/.config}/tmux-powerline`；Tabby 配置复制到 `$HOME/Library/Application Support/tabby/config.yaml`
 
 ### 2. Ubuntu
 
@@ -86,6 +88,7 @@ DOTFILES_SKIP_TABBY=1 ./install/ubuntu.sh
 - `apt`: 基础构建工具、`git`、`curl`、`zsh`、`tmux`、`fzf`、`fd-find`、`ripgrep`、`jq`、`unzip` 等
 - Neovim: 官方最新 release 预编译包，安装到 `~/.local/opt/nvim`
 - Lazygit / Yazi: GitHub Release 最新官方二进制
+- tmux-powerline 用户配置部署到 `${XDG_CONFIG_HOME:-$HOME/.config}/tmux-powerline`
 - Tabby: 从 `Eugeny/tabby` 最新 GitHub Release 中按 `x86_64` / `arm64` 架构选择 `.deb` 安装包
 - Tabby 配置复制到 `${XDG_CONFIG_HOME:-$HOME/.config}/tabby/config.yaml`
 - Ubuntu 兼容补丁：如果系统只提供 `batcat` / `fdfind`，会自动补 `~/.local/bin/bat` 和 `~/.local/bin/fd`
@@ -120,7 +123,7 @@ cd /c/path/to/repo
 - `winget`: `Eugeny.Tabby`、`JesseDuffield.lazygit`
 - 配置镜像：
   - `~/.zshrc` `~/.p10k.zsh` `~/.tmux.conf`
-  - `~/.config/nvim` / `~/.config/yazi` / `~/.config/lazygit`
+  - `~/.config/tmux-powerline` / `~/.config/nvim` / `~/.config/yazi` / `~/.config/lazygit`
   - 同时同步到 Windows 原生程序常用位置：`%LOCALAPPDATA%\nvim`、`%APPDATA%\yazi\config`、`%APPDATA%\lazygit`
   - Tabby 配置复制到 `%APPDATA%\Tabby\config.yaml`
 
@@ -149,10 +152,11 @@ cd /c/path/to/repo
   - `Alt-o`: 新建 window
   - `Alt-1..0`: 直接切到编号 window
   - `Alt-f`: 当前 pane 最大化 / 还原
-- 状态栏增强为：
-  - 左侧显示 session 名和 window 数
-  - 中间显示 window 列表
-  - 右侧显示 `PREFIX` / `COPY` / `ZOOM` 状态、主机名和时间
+- 最底部 bar 由锁定版本的 tmux-powerline 生成，用户配置部署到 `${XDG_CONFIG_HOME:-$HOME/.config}/tmux-powerline`：
+  - 左侧只有 `tmux_session_info`，以 `#S:#I.#P` 显示 session/window/pane
+  - 中间保留 tmux 的动态 window 列表并居中
+  - 右侧不配置 segment，渲染结果为空
+  - 状态栏底色继承 `colour235`，每 1 秒刷新一次
 - pane 顶部边框显示 pane 编号、当前命令和当前目录名
 - 插件统一由 `bootstrap/plugins.lock.sh` 固定版本安装
 
@@ -228,8 +232,12 @@ tabby --version
 
 ```bash
 tmux source-file ~/.tmux.conf
+~/.tmux/plugins/tmux-powerline/powerline.sh left
+~/.tmux/plugins/tmux-powerline/powerline.sh right
 yazi --debug >/dev/null
 ```
+
+左侧命令应输出包含 `#S:#I.#P`、`colour148` 和 `colour234` 的 tmux 格式串；右侧命令应不输出内容。
 
 ## 已知说明
 

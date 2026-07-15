@@ -249,6 +249,7 @@ for path in \
   "$HOME/.zshrc" \
   "$HOME/.p10k.zsh" \
   "$HOME/.tmux.conf" \
+  "$HOME/.config/tmux-powerline" \
   "$HOME/.config/nvim" \
   "$HOME/.config/yazi" \
   "$HOME/.config/lazygit"; do
@@ -264,7 +265,12 @@ YAZI_CONFIG_HOME="$PWD/config/yazi" yazi --debug >/dev/null
 tmux -L dotfiles-check -f "$HOME/.tmux.conf" new-session -d -s verify
 tmux -L dotfiles-check display-message -p 'session=#{session_name}'
 tmux -L dotfiles-check kill-server
+
+~/.tmux/plugins/tmux-powerline/powerline.sh left
+~/.tmux/plugins/tmux-powerline/powerline.sh right
 ```
+
+第一条 powerline 命令应显示 session/window/pane 格式及主题颜色；第二条应不输出内容。
 
 ### 确认 Tabby 未部署
 
