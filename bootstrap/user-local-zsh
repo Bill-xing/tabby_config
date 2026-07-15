@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+zsh_root="${ZSH_LOCAL_ROOT:-$HOME/.local/opt/zsh}"
+zsh_binary="$zsh_root/root/bin/zsh"
+
+if [ ! -x "$zsh_binary" ]; then
+  printf 'ERROR: user-local zsh binary not found: %s\n' "$zsh_binary" >&2
+  exit 1
+fi
+
+export SHELL="$HOME/.local/bin/zsh"
+export ZDOTDIR="$zsh_root/startup"
+exec "$zsh_binary" "$@"

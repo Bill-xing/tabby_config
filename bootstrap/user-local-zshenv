@@ -1,0 +1,11 @@
+# Bootstrap an Ubuntu package extracted under ~/.local/opt/zsh. The wrapper
+# initially points ZDOTDIR here; restore it to HOME before zsh looks for .zshrc.
+typeset zsh_local_root="${ZDOTDIR:h}"
+module_path=("$zsh_local_root"/root/usr/lib/*/zsh/*(N/) $module_path)
+fpath=(
+  "$zsh_local_root/root/usr/share/zsh/functions"
+  "$zsh_local_root"/root/usr/share/zsh/functions/**/*(N/)
+  $fpath
+)
+export ZDOTDIR="$HOME"
+unset zsh_local_root

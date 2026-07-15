@@ -47,6 +47,21 @@ is_linux() {
   [ "$(platform_name)" = "linux" ]
 }
 
+flag_enabled() {
+  case "${1:-0}" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+skip_tabby() {
+  flag_enabled "${DOTFILES_SKIP_TABBY:-0}"
+}
+
+force_install() {
+  flag_enabled "${DOTFILES_FORCE_INSTALL:-0}"
+}
+
 run_root() {
   if [ "$(id -u)" -eq 0 ]; then
     "$@"
@@ -196,7 +211,11 @@ install_config_payload() {
   link_or_copy "$REPO_ROOT/config/zsh/.zshrc" "$HOME/.zshrc"
   link_or_copy "$REPO_ROOT/config/zsh/.p10k.zsh" "$HOME/.p10k.zsh"
   link_or_copy "$REPO_ROOT/config/tmux/.tmux.conf" "$HOME/.tmux.conf"
-  install_tabby_config
+  if skip_tabby; then
+    log "Skipping Tabby config (DOTFILES_SKIP_TABBY is enabled)"
+  else
+    install_tabby_config
+  fi
   link_or_copy "$REPO_ROOT/config/nvim" "$cfg/nvim"
   link_or_copy "$REPO_ROOT/config/yazi" "$cfg/yazi"
 
@@ -233,14 +252,30 @@ clone_repo_at_ref() {
   local repo_url="$1"
   local ref="$2"
   local target_dir="$3"
+  local current_ref
 
-  if [ ! -d "$target_dir/.git" ]; then
+  if [ -d "$target_dir/.git" ]; then
+    current_ref="$(git -C "$target_dir" rev-parse HEAD 2>/dev/null || true)"
+    if ! force_install && [ "$current_ref" = "$ref" ]; then
+      log "Reusing pinned checkout: $target_dir"
+      return 0
+    fi
+    git -C "$target_dir" remote set-url origin "$repo_url"
+  else
+    if [ -e "$target_dir" ]; then
+      die "plugin target exists but is not a git repository: $target_dir"
+    fi
     mkdir -p "$(dirname "$target_dir")"
-    git clone "$repo_url" "$target_dir"
+    git init -q "$target_dir"
+    git -C "$target_dir" remote add origin "$repo_url"
   fi
 
-  git -C "$target_dir" fetch --tags --force origin
-  git -C "$target_dir" checkout --force "$ref"
+  log "Fetching pinned checkout: $target_dir"
+  if ! git -C "$target_dir" fetch --depth 1 origin "$ref"; then
+    warn "Shallow fetch failed for $repo_url; retrying with tags"
+    git -C "$target_dir" fetch --tags --force origin
+  fi
+  git -C "$target_dir" checkout --force --detach "$ref"
 }
 
 install_oh_my_zsh_stack() {
@@ -266,9 +301,13 @@ fetch_url() {
   local output="$2"
 
   if have curl; then
-    curl -fsSL "$url" -o "$output"
+    curl -fsSL \
+      --retry 3 \
+      --retry-delay 1 \
+      --connect-timeout 15 \
+      "$url" -o "$output"
   elif have wget; then
-    wget -qO "$output" "$url"
+    wget --tries=3 --timeout=15 -qO "$output" "$url"
   else
     die "need curl or wget to download $url"
   fi
@@ -319,8 +358,8 @@ install_lazygit_linux() {
 
   arch="$(linux_arch)"
   case "$arch" in
-    x86_64) pattern='Linux_x86_64\\.tar\\.gz$' ;;
-    arm64) pattern='Linux_arm64\\.tar\\.gz$' ;;
+    x86_64) pattern='[Ll]inux_x86_64\.tar\.gz$' ;;
+    arm64) pattern='[Ll]inux_arm64\.tar\.gz$' ;;
   esac
 
   url="$(github_latest_asset_url 'jesseduffield/lazygit' "$pattern")"
@@ -339,8 +378,8 @@ install_yazi_linux() {
 
   arch="$(linux_arch)"
   case "$arch" in
-    x86_64) pattern='x86_64-unknown-linux-(gnu|musl)\\.zip$' ;;
-    arm64) pattern='aarch64-unknown-linux-(gnu|musl)\\.zip$' ;;
+    x86_64) pattern='x86_64-unknown-linux-musl\.zip$' ;;
+    arm64) pattern='aarch64-unknown-linux-musl\.zip$' ;;
   esac
 
   url="$(github_latest_asset_url 'sxyazi/yazi' "$pattern")"

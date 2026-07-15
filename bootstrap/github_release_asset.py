@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import os
 import re
 import sys
 import urllib.request
@@ -12,12 +13,21 @@ def main() -> int:
 
     repo = sys.argv[1]
     pattern = re.compile(sys.argv[2])
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "dotfiles-bootstrap",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
     request = urllib.request.Request(
         f"https://api.github.com/repos/{repo}/releases/latest",
-        headers={"Accept": "application/vnd.github+json", "User-Agent": "dotfiles-bootstrap"},
+        headers=headers,
     )
 
-    with urllib.request.urlopen(request) as response:
+    with urllib.request.urlopen(request, timeout=30) as response:
         payload = json.load(response)
 
     for asset in payload.get("assets", []):

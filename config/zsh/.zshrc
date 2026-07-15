@@ -140,6 +140,10 @@ if command -v fzf >/dev/null 2>&1; then
   eval "$(fzf --zsh 2>/dev/null)" || true
 fi
 
+if command -v zoxide >/dev/null 2>&1; then
+  eval "$(zoxide init zsh)"
+fi
+
 if [ -f /opt/homebrew/opt/fzf/shell/completion.zsh ]; then
   source /opt/homebrew/opt/fzf/shell/completion.zsh
 fi
@@ -249,3 +253,8 @@ if [ "$DOTFILES_PLATFORM" = 'windows' ]; then
 fi
 
 [[ -f ~/.p10k.zsh ]] && source ~/.p10k.zsh
+
+# Keep machine-specific settings out of this shared repository. Loading this
+# last lets local aliases and environment variables intentionally override the
+# portable defaults above.
+_dotfiles_source_if_exists "$HOME/.zshrc.local"

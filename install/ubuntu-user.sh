@@ -1,0 +1,275 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bootstrap/common.sh
+source "$SCRIPT_DIR/../bootstrap/common.sh"
+
+is_linux || die "install/ubuntu-user.sh must be run on Linux"
+need_cmd apt-get
+need_cmd cc
+need_cmd curl
+need_cmd dpkg-deb
+need_cmd file
+need_cmd git
+need_cmd python3
+need_cmd tar
+need_cmd tmux
+need_cmd unzip
+
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+
+local_user_tool_usable() {
+  local binary="$1"
+  local path="$HOME/.local/bin/$binary"
+
+  [ -x "$path" ] && "$path" --version >/dev/null 2>&1
+}
+
+install_user_local_zsh() {
+  local tmp_dir target deb
+
+  target="$HOME/.local/opt/zsh"
+  if ! force_install \
+    && [ -x "$target/root/bin/zsh" ] \
+    && "$target/root/bin/zsh" --version >/dev/null 2>&1; then
+    log "Reusing user-local zsh"
+    mkdir -p "$target/startup" "$HOME/.local/bin"
+    install -m 0755 "$REPO_ROOT/bootstrap/user-local-zsh" "$HOME/.local/bin/zsh"
+    install -m 0644 "$REPO_ROOT/bootstrap/user-local-zshenv" "$target/startup/.zshenv"
+    return 0
+  fi
+
+  tmp_dir="$(mktemp -d)"
+
+  log "Downloading Ubuntu zsh packages without root privileges"
+  if ! (
+    cd "$tmp_dir"
+    env \
+      -u http_proxy -u https_proxy -u all_proxy \
+      -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+      apt-get download zsh zsh-common
+  ); then
+    warn "Direct package download failed; retrying with the current proxy environment"
+    (cd "$tmp_dir" && apt-get download zsh zsh-common)
+  fi
+
+  rm -rf "$target"
+  mkdir -p "$target/root" "$target/startup" "$HOME/.local/bin"
+  for deb in "$tmp_dir"/*.deb; do
+    dpkg-deb -x "$deb" "$target/root"
+  done
+
+  [ -x "$target/root/bin/zsh" ] || die "failed to extract the zsh binary"
+  install -m 0755 "$REPO_ROOT/bootstrap/user-local-zsh" "$HOME/.local/bin/zsh"
+  install -m 0644 "$REPO_ROOT/bootstrap/user-local-zshenv" "$target/startup/.zshenv"
+  rm -rf "$tmp_dir"
+}
+
+install_github_archive_binary() {
+  local repo="$1"
+  local pattern="$2"
+  local binary="$3"
+  local url tmp_dir asset_name binary_path
+
+  if ! force_install && local_user_tool_usable "$binary"; then
+    log "Reusing user-local $binary"
+    return 0
+  fi
+
+  url="$(github_latest_asset_url "$repo" "$pattern")"
+  tmp_dir="$(mktemp -d)"
+  asset_name="$(basename "$url")"
+
+  log "Installing $binary from $url"
+  fetch_url "$url" "$tmp_dir/$asset_name"
+  case "$asset_name" in
+    *.tar.gz) tar -xzf "$tmp_dir/$asset_name" -C "$tmp_dir" ;;
+    *.zip) unzip -q "$tmp_dir/$asset_name" -d "$tmp_dir" ;;
+    *) die "unsupported archive for $binary: $asset_name" ;;
+  esac
+
+  binary_path="$(find "$tmp_dir" -type f -name "$binary" | head -n 1)"
+  [ -n "$binary_path" ] || die "failed to find $binary in $asset_name"
+  install -m 0755 "$binary_path" "$HOME/.local/bin/$binary"
+  rm -rf "$tmp_dir"
+}
+
+install_github_binary() {
+  local repo="$1"
+  local pattern="$2"
+  local binary="$3"
+  local url tmp_dir
+
+  if ! force_install && local_user_tool_usable "$binary"; then
+    log "Reusing user-local $binary"
+    return 0
+  fi
+
+  url="$(github_latest_asset_url "$repo" "$pattern")"
+  tmp_dir="$(mktemp -d)"
+
+  log "Installing $binary from $url"
+  fetch_url "$url" "$tmp_dir/$binary"
+  install -m 0755 "$tmp_dir/$binary" "$HOME/.local/bin/$binary"
+  rm -rf "$tmp_dir"
+}
+
+install_user_cli_stack() {
+  local arch
+  local fzf_pattern fd_pattern rg_pattern bat_pattern delta_pattern eza_pattern zoxide_pattern
+  local direnv_pattern jq_pattern
+
+  arch="$(linux_arch)"
+  case "$arch" in
+    x86_64)
+      fzf_pattern='linux_amd64\.tar\.gz$'
+      fd_pattern='x86_64-unknown-linux-musl\.tar\.gz$'
+      rg_pattern='x86_64-unknown-linux-musl\.tar\.gz$'
+      bat_pattern='x86_64-unknown-linux-musl\.tar\.gz$'
+      delta_pattern='x86_64-unknown-linux-musl\.tar\.gz$'
+      eza_pattern='x86_64-unknown-linux-musl\.tar\.gz$'
+      zoxide_pattern='x86_64-unknown-linux-musl\.tar\.gz$'
+      direnv_pattern='direnv\.linux-amd64$'
+      jq_pattern='jq-linux-amd64$'
+      ;;
+    arm64)
+      fzf_pattern='linux_arm64\.tar\.gz$'
+      fd_pattern='aarch64-unknown-linux-musl\.tar\.gz$'
+      rg_pattern='aarch64-unknown-linux-musl\.tar\.gz$'
+      bat_pattern='aarch64-unknown-linux-musl\.tar\.gz$'
+      delta_pattern='aarch64-unknown-linux-musl\.tar\.gz$'
+      eza_pattern='aarch64-unknown-linux-musl\.tar\.gz$'
+      zoxide_pattern='aarch64-unknown-linux-musl\.tar\.gz$'
+      direnv_pattern='direnv\.linux-arm64$'
+      jq_pattern='jq-linux-arm64$'
+      ;;
+  esac
+
+  install_github_archive_binary junegunn/fzf "$fzf_pattern" fzf
+  install_github_archive_binary sharkdp/fd "$fd_pattern" fd
+  install_github_archive_binary BurntSushi/ripgrep "$rg_pattern" rg
+  install_github_archive_binary sharkdp/bat "$bat_pattern" bat
+  install_github_archive_binary dandavison/delta "$delta_pattern" delta
+  install_github_archive_binary eza-community/eza "$eza_pattern" eza
+  install_github_archive_binary ajeetdsouza/zoxide "$zoxide_pattern" zoxide
+  install_github_binary direnv/direnv "$direnv_pattern" direnv
+  install_github_binary jqlang/jq "$jq_pattern" jq
+}
+
+tree_sitter_cli_usable() {
+  local version
+
+  version="$(tree-sitter --version 2>/dev/null | awk 'NR == 1 { print $2 }')" || return 1
+  [ -n "$version" ] || return 1
+  python3 -c \
+    'import sys; parts = tuple(map(int, sys.argv[1].split(".")[:3])); raise SystemExit(parts < (0, 26, 1))' \
+    "$version"
+}
+
+install_user_tree_sitter_cli() {
+  local arch rust_target tmp_dir cargo_bin
+  local -a cargo_force
+
+  if ! force_install && have tree-sitter && tree_sitter_cli_usable; then
+    log "Using compatible tree-sitter CLI: $(tree-sitter --version)"
+    return 0
+  fi
+
+  arch="$(linux_arch)"
+  case "$arch" in
+    x86_64) rust_target="x86_64-unknown-linux-gnu" ;;
+    arm64) rust_target="aarch64-unknown-linux-gnu" ;;
+  esac
+
+  if have cargo; then
+    cargo_bin="$(command -v cargo)"
+  else
+    tmp_dir="$(mktemp -d)"
+    log "Installing a minimal Rust toolchain for tree-sitter CLI"
+    fetch_url \
+      "https://static.rust-lang.org/rustup/dist/${rust_target}/rustup-init" \
+      "$tmp_dir/rustup-init"
+    chmod 0755 "$tmp_dir/rustup-init"
+    "$tmp_dir/rustup-init" -y --profile minimal --no-modify-path
+    rm -rf "$tmp_dir"
+    cargo_bin="$HOME/.cargo/bin/cargo"
+  fi
+
+  [ -x "$cargo_bin" ] || die "failed to install cargo for tree-sitter CLI"
+  cargo_force=()
+  if force_install; then
+    cargo_force=(--force)
+  fi
+  log "Building tree-sitter CLI 0.26.11 for this server"
+  "$cargo_bin" install tree-sitter-cli \
+    --version 0.26.11 \
+    --locked \
+    --no-default-features \
+    "${cargo_force[@]}" \
+    --root "$HOME/.local/opt/tree-sitter-cli"
+  install -m 0755 \
+    "$HOME/.local/opt/tree-sitter-cli/bin/tree-sitter" \
+    "$HOME/.local/bin/tree-sitter"
+}
+
+install_user_release_tool() {
+  local binary="$1"
+  local installer="$2"
+
+  if ! force_install && local_user_tool_usable "$binary"; then
+    log "Reusing user-local $binary"
+    return 0
+  fi
+  "$installer"
+}
+
+install_ssh_zsh_handoff() {
+  local bashrc="$HOME/.bashrc"
+  local marker="# >>> tabby_config user-local zsh >>>"
+
+  if flag_enabled "${DOTFILES_SKIP_SSH_ZSH_HANDOFF:-0}"; then
+    log "Skipping interactive SSH zsh handoff"
+    return 0
+  fi
+
+  touch "$bashrc"
+  if grep -Fq "$marker" "$bashrc"; then
+    log "Reusing existing interactive SSH zsh handoff"
+    return 0
+  fi
+
+  log "Enabling user-local zsh for interactive SSH terminals"
+  cat >>"$bashrc" <<'EOF'
+
+# >>> tabby_config user-local zsh >>>
+# Keep non-interactive SSH commands (scp/rsync/remote commands) on bash.
+if [ -n "${SSH_CONNECTION:-}" ] && [ -t 0 ] && [ -t 1 ] \
+  && [ -x "$HOME/.local/bin/zsh" ] && [ -z "${ZSH_VERSION:-}" ]; then
+  exec "$HOME/.local/bin/zsh" -l
+fi
+# <<< tabby_config user-local zsh <<<
+EOF
+}
+
+ensure_base_dirs
+install_user_local_zsh
+install_user_cli_stack
+install_user_tree_sitter_cli
+install_user_release_tool nvim install_neovim_linux
+install_user_release_tool lazygit install_lazygit_linux
+install_user_release_tool yazi install_yazi_linux
+
+if [ -f "$HOME/.zshrc" ] && [ ! -L "$HOME/.zshrc" ] && [ ! -e "$HOME/.zshrc.local" ]; then
+  log "Preserving the existing machine-specific zsh config as ~/.zshrc.local"
+  cp "$HOME/.zshrc" "$HOME/.zshrc.local"
+fi
+
+install_oh_my_zsh_stack
+install_tmux_plugins
+export DOTFILES_SKIP_TABBY=1
+install_config_payload
+install_ssh_zsh_handoff
+
+log "Done. User-local tools are in ~/.local/bin; Tabby was not installed or configured."
+log "Run again to repair links quickly, or set DOTFILES_FORCE_INSTALL=1 to reinstall tools."

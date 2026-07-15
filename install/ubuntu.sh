@@ -43,7 +43,11 @@ fi
 install_neovim_linux
 install_lazygit_linux
 install_yazi_linux
-install_tabby_linux
+if skip_tabby; then
+  log "Skipping Tabby package (DOTFILES_SKIP_TABBY is enabled)"
+else
+  install_tabby_linux
+fi
 
 mkdir -p "$HOME/.local/bin"
 if command -v batcat >/dev/null 2>&1 && ! command -v bat >/dev/null 2>&1; then
@@ -57,4 +61,8 @@ install_oh_my_zsh_stack
 install_tmux_plugins
 install_config_payload
 
-log "Done. Start Tabby and make zsh your default shell with: chsh -s $(command -v zsh)"
+if skip_tabby; then
+  log "Done. Tabby was skipped. Make zsh your default shell with: chsh -s $(command -v zsh)"
+else
+  log "Done. Start Tabby and make zsh your default shell with: chsh -s $(command -v zsh)"
+fi

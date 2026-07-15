@@ -1,6 +1,6 @@
 # Cross-platform terminal dotfiles
 
-这一套仓库把当前使用的 `tmux`、`zsh`、`oh-my-zsh`、`powerlevel10k`、`LazyVim`、`lazygit`、`yazi`、`Tabby` 配置整理成可迁移的 dotfiles，并提供三套安装入口。
+这一套仓库把当前使用的 `tmux`、`zsh`、`oh-my-zsh`、`powerlevel10k`、`LazyVim`、`lazygit`、`yazi`、`Tabby` 配置整理成可迁移的 dotfiles，并提供多套安装入口。
 
 当前这版额外统一了一套面向终端工作流的方向键习惯：
 
@@ -13,6 +13,7 @@
 
 - macOS: `./install/macos.sh`
 - Ubuntu: `./install/ubuntu.sh`
+- Ubuntu SSH / 无 sudo: `./install/ubuntu-user.sh`
 - Windows 原生 + MSYS2: `./install/windows-msys2.sh`
 - Windows PowerShell 引导: `./install/windows.ps1`
 
@@ -61,6 +62,24 @@ cd /path/to/this/repo
 cd /path/to/this/repo
 ./install/ubuntu.sh
 ```
+
+纯 SSH 服务器不需要安装或部署 Tabby 时，使用：
+
+```bash
+DOTFILES_SKIP_TABBY=1 ./install/ubuntu.sh
+```
+
+该模式保留完整 CLI 工具、Zsh、tmux、LazyVim、Lazygit 与 Yazi 流程，只跳过 Tabby 软件包和配置文件。
+
+如果 SSH 账号没有 `sudo` 权限，但系统已有 `cc`、`git`、`curl`、`python3`、`tmux`、`file`、`tar`、`unzip`、`apt-get` 和 `dpkg-deb`，可使用纯用户目录安装：
+
+```bash
+./install/ubuntu-user.sh
+```
+
+该入口把 Ubuntu 的 Zsh 包解压到 `~/.local/opt/zsh`，并把其余 CLI 工具安装到 `~/.local/bin`；为 LazyVim 构建兼容服务器 GLIBC 的 tree-sitter CLI 时，会按需安装最小 Rust 工具链。该模式固定跳过 Tabby，不修改系统软件包或 `/etc/shells`。
+
+完整的首装、快速重跑、代理、Neovim 预热、验证与故障恢复流程见 [SSH 服务器快速环境配置指南](docs/server-quickstart.md)。安装器会复用可工作的本地工具和已处于锁定 commit 的插件；需要全部重装时才使用 `DOTFILES_FORCE_INSTALL=1`。
 
 安装内容：
 
@@ -114,6 +133,7 @@ cd /c/path/to/repo
 - 自动识别 `macOS` / `Linux` / `Windows(MSYS2)`
 - 按平台追加 PATH：Homebrew、`~/.local/bin`、Cargo、Go、pnpm、MSYS2 路径
 - 保留原有 alias、history、`direnv`、`nvm`、`pyenv`、`nodenv`、`conda`、`fzf`、`eza`、`bat`
+- 最后加载可选的 `~/.zshrc.local`，用于保留服务器代理等不适合提交到仓库的机器专属设置
 - 在 Windows/MSYS2 下为 `yazi` 设置 `YAZI_FILE_ONE`（如果检测到 `file.exe`）
 
 ### tmux
@@ -208,13 +228,7 @@ tabby --version
 
 ```bash
 tmux source-file ~/.tmux.conf
-python3 - <<'PY'
-import tomllib
-for path in ['config/yazi/yazi.toml', 'config/yazi/keymap.toml']:
-    with open(path, 'rb') as f:
-        tomllib.load(f)
-print('yazi config ok')
-PY
+yazi --debug >/dev/null
 ```
 
 ## 已知说明
