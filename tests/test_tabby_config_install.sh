@@ -148,3 +148,78 @@ assert(
 
 puts "tabby config content and privacy checks passed"
 RUBY
+
+# shellcheck source=bootstrap/common.sh
+source "$REPO_ROOT/bootstrap/common.sh"
+
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+
+export HOME="$tmp_dir/home"
+export XDG_CONFIG_HOME="$tmp_dir/xdg-config"
+export APPDATA="$tmp_dir/windows-appdata"
+export DOTFILES_LINK_MODE=symlink
+mkdir -p "$HOME"
+
+date() {
+  if [ "$#" -eq 1 ] && [ "$1" = "+%Y%m%d%H%M%S" ]; then
+    printf '%s\n' "20260715133000"
+  else
+    command date "$@"
+  fi
+}
+
+assert_eq \
+  "$XDG_CONFIG_HOME/tabby/config.yaml" \
+  "$(tabby_config_path linux)" \
+  "Linux Tabby config path"
+assert_eq \
+  "$HOME/Library/Application Support/tabby/config.yaml" \
+  "$(tabby_config_path macos)" \
+  "macOS Tabby config path"
+assert_eq \
+  "$APPDATA/Tabby/config.yaml" \
+  "$(tabby_config_path windows)" \
+  "Windows Tabby config path"
+
+if (unset APPDATA; tabby_config_path windows >/dev/null 2>&1); then
+  fail "Windows path calculation must reject a missing APPDATA"
+fi
+
+if (tabby_config_path plan9 >/dev/null 2>&1); then
+  fail "unsupported platforms must be rejected"
+fi
+
+target="$(tabby_config_path linux)"
+install_tabby_config linux
+
+[ -f "$target" ] || fail "Tabby config was not copied"
+[ ! -L "$target" ] || fail "Tabby config must never be a symlink"
+cmp -s "$TABBY_CONFIG" "$target" || fail "copied Tabby config differs from source"
+
+printf 'private runtime state\n' >"$target"
+install_tabby_config linux
+
+first_backup="${target}.bak.20260715133000"
+[ -f "$first_backup" ] || fail "expected first timestamped backup"
+cmp -s <(printf 'private runtime state\n') "$first_backup" ||
+  fail "first backup content differs from original runtime config"
+[ ! -L "$target" ] || fail "replacement Tabby config must remain a regular file"
+cmp -s "$TABBY_CONFIG" "$target" || fail "replacement config differs from source"
+
+install_tabby_config linux
+
+second_backup="${target}.bak.20260715133000.1"
+shopt -s nullglob
+backups=("$target".bak.*)
+shopt -u nullglob
+[ "${#backups[@]}" -eq 2 ] || fail "expected exactly two timestamped backups"
+[ -f "$second_backup" ] || fail "expected collision-safe timestamped backup"
+cmp -s <(printf 'private runtime state\n') "$first_backup" ||
+  fail "first backup content changed after collision"
+cmp -s "$TABBY_CONFIG" "$second_backup" ||
+  fail "collision backup differs from public Tabby config"
+[ ! -L "$target" ] || fail "replacement Tabby config must remain a regular file"
+cmp -s "$TABBY_CONFIG" "$target" || fail "replacement config differs from source"
+
+printf 'tabby config path, copy, and backup checks passed\n'

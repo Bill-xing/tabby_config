@@ -57,7 +57,7 @@ run_root() {
 
 backup_existing() {
   local target="$1"
-  local stamp backup
+  local stamp backup suffix
 
   if [ ! -e "$target" ] && [ ! -L "$target" ]; then
     return 0
@@ -65,6 +65,11 @@ backup_existing() {
 
   stamp="$(date +%Y%m%d%H%M%S)"
   backup="${target}.bak.${stamp}"
+  suffix=1
+  while [ -e "$backup" ] || [ -L "$backup" ]; do
+    backup="${target}.bak.${stamp}.${suffix}"
+    suffix=$((suffix + 1))
+  done
   log "Backing up $target -> $backup"
   mv "$target" "$backup"
 }
@@ -143,6 +148,46 @@ ensure_base_dirs() {
   mkdir -p "$(config_home)" "$(data_home)" "$(state_home)" "$(cache_home)" "$HOME/.local/bin" "$HOME/.local/opt"
 }
 
+tabby_config_path() {
+  local platform="${1:-$(platform_name)}"
+  local appdata_unix
+
+  case "$platform" in
+    linux)
+      printf '%s\n' "$(config_home)/tabby/config.yaml"
+      ;;
+    macos)
+      printf '%s\n' "$HOME/Library/Application Support/tabby/config.yaml"
+      ;;
+    windows)
+      appdata_unix="$(windows_to_unix_path "${APPDATA:-}")"
+      [ -n "$appdata_unix" ] || die "APPDATA is required to install the Windows Tabby config"
+      printf '%s\n' "$appdata_unix/Tabby/config.yaml"
+      ;;
+    *)
+      die "unsupported platform for Tabby config: $platform"
+      ;;
+  esac
+}
+
+install_tabby_config() {
+  local platform="${1:-$(platform_name)}"
+  local source_file="$REPO_ROOT/config/tabby/config.yaml"
+  local target
+
+  [ -f "$source_file" ] || die "missing Tabby config: $source_file"
+  target="$(tabby_config_path "$platform")"
+
+  warn "Close Tabby before installing config; a running app may overwrite this file on exit"
+  mkdir -p "$(dirname "$target")"
+
+  if [ -e "$target" ] || [ -L "$target" ]; then
+    backup_existing "$target"
+  fi
+
+  cp "$source_file" "$target"
+}
+
 install_config_payload() {
   local cfg
   cfg="$(config_home)"
@@ -151,7 +196,7 @@ install_config_payload() {
   link_or_copy "$REPO_ROOT/config/zsh/.zshrc" "$HOME/.zshrc"
   link_or_copy "$REPO_ROOT/config/zsh/.p10k.zsh" "$HOME/.p10k.zsh"
   link_or_copy "$REPO_ROOT/config/tmux/.tmux.conf" "$HOME/.tmux.conf"
-  link_or_copy "$REPO_ROOT/config/wezterm/wezterm.lua" "$HOME/.wezterm.lua"
+  install_tabby_config
   link_or_copy "$REPO_ROOT/config/nvim" "$cfg/nvim"
   link_or_copy "$REPO_ROOT/config/yazi" "$cfg/yazi"
 
