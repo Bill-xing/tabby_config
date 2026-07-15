@@ -36,7 +36,7 @@
 - `lazygit` 只迁移用户配置 `config.yml`，不迁移运行态 `state.yml`。
 - Windows 方案以 MSYS2 为 Unix 工具栈，Tabby 和 Lazygit 通过 `winget` 安装。
 - 普通 dotfiles 默认在 Unix 上使用软链接，在 Windows / MSYS2 上默认复制文件；可通过 `DOTFILES_LINK_MODE=symlink|copy` 覆盖。
-- Tabby 是特例：无论 `DOTFILES_LINK_MODE` 如何设置，都强制复制为普通文件，绝不创建符号链接。如果目标已存在，安装器会先在同目录备份为 `config.yaml.bak.<timestamp>`；同一秒内发生命名冲突时依次追加 `.1`、`.2` 等后缀。
+- Tabby 是特例：无论 `DOTFILES_LINK_MODE` 如何设置，都强制复制为普通文件，绝不创建符号链接。如果目标已存在，安装器会先在同目录备份为 `config.yaml.bak.YYYYMMDDHHMMSS`；同一秒内发生命名冲突时依次追加 `.1`、`.2` 等后缀。
 
 ## 快速开始
 
@@ -164,9 +164,13 @@ cd /c/path/to/repo
 
 ### Tabby
 
-`config/tabby/config.yaml` 是当前 Tabby 设置的公开、经过隐私清理的快照，不是完整的运行时状态导出。快照保留了 AdventureTime 主题、20 号字体、0.84 透明度、背景活力效果和当前快捷键。
+`config/tabby/config.yaml` 来源于当前 Tabby `1.0.234` 配置，但仓库 YAML 是按字段白名单重建的公开快照，不是将完整本机文件复制后再依赖黑名单清理。
 
-仓库刻意排除了设备、账户、SSH 主机、同步或保管库等私密状态，不应把此文件当作本机 Tabby 全部数据的原样备份。
+快照保留了深色 AdventureTime、浅色 Tabby Default Light、20px 字体、0.84 透明度和 `vibrancy`，并保持欢迎页关闭、SSH profile 默认关闭动态标题以及当前快捷键。
+
+白名单明确排除设备和账户数据、根级 `ssh`、SSH known-host、连接 `profile`、同步信息 `configSync`、`vault`、令牌、密码、密钥路径以及 Electron 运行态数据。因此，这个文件不是本机 Tabby 全部数据的原样备份。
+
+> **安全警告：** 不要把本机完整的 Tabby `config.yaml` 直接复制回仓库。更新快照时，必须重新执行字段白名单筛选，只写入允许公开的字段。
 
 由于 Tabby 退出时可能重写配置，部署前请关闭 Tabby。部署始终是“备份旧文件、再复制公开快照”，不会把应用正在写入的配置直接链接回 Git 工作树。
 
