@@ -211,6 +211,7 @@ install_config_payload() {
   link_or_copy "$REPO_ROOT/config/zsh/.zshrc" "$HOME/.zshrc"
   link_or_copy "$REPO_ROOT/config/zsh/.p10k.zsh" "$HOME/.p10k.zsh"
   link_or_copy "$REPO_ROOT/config/tmux/.tmux.conf" "$HOME/.tmux.conf"
+  link_or_copy "$REPO_ROOT/config/tmux-powerline" "$cfg/tmux-powerline"
   if skip_tabby; then
     log "Skipping Tabby config (DOTFILES_SKIP_TABBY is enabled)"
   else

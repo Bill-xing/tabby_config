@@ -31,3 +31,31 @@ assert_file_contains "$POWERLINE_THEME" '"tmux_session_info 148 234"'
 assert_file_contains "$POWERLINE_THEME" 'TMUX_POWERLINE_RIGHT_STATUS_SEGMENTS=()'
 
 printf 'tmux-powerline content checks passed\n'
+
+# shellcheck source=bootstrap/common.sh
+source "$REPO_ROOT/bootstrap/common.sh"
+
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+
+export HOME="$tmp_dir/home"
+export XDG_CONFIG_HOME="$tmp_dir/xdg-config"
+export DOTFILES_LINK_MODE=copy
+export DOTFILES_SKIP_TABBY=1
+mkdir -p "$HOME"
+
+install_config_payload
+
+installed_powerline="$XDG_CONFIG_HOME/tmux-powerline"
+[ -d "$installed_powerline" ] || fail "tmux-powerline directory was not installed"
+[ ! -L "$installed_powerline" ] || fail "copy mode installed a symlink"
+cmp -s "$POWERLINE_CONFIG" "$installed_powerline/config.sh" ||
+  fail "installed tmux-powerline config differs from source"
+cmp -s "$POWERLINE_THEME" "$installed_powerline/themes/minimal.sh" ||
+  fail "installed minimal theme differs from source"
+
+assert_file_contains \
+  "$REPO_ROOT/bootstrap/common.sh" \
+  'link_or_copy "$REPO_ROOT/config/tmux-powerline" "$cfg/tmux-powerline"'
+
+printf 'tmux-powerline deployment checks passed\n'
