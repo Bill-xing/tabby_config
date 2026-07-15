@@ -243,6 +243,45 @@ cmp -s "$TABBY_CONFIG" "$second_backup" ||
 [ ! -L "$target" ] || fail "replacement Tabby config must remain a regular file"
 cmp -s "$TABBY_CONFIG" "$target" || fail "replacement config differs from source"
 
+symlink_source="$tmp_dir/symlinked-private-runtime.yaml"
+printf 'symlinked private runtime state\nsecond private line\n' >"$symlink_source"
+symlink_source_fingerprint="$(cksum <"$symlink_source")"
+[ -f "$symlink_source" ] || fail "symlink source must start as a regular file"
+[ ! -L "$symlink_source" ] || fail "symlink source must not itself be a symlink"
+
+rm "$target"
+ln -s "$symlink_source" "$target"
+original_link_target="$(readlink "$target")"
+install_tabby_config linux
+
+symlink_backup="${target}.bak.20260715133000.2"
+[ -L "$symlink_backup" ] || fail "symlinked Tabby config backup must remain a symlink"
+assert_eq \
+  "$original_link_target" \
+  "$(readlink "$symlink_backup")" \
+  "symlink backup target"
+[ -f "$symlink_source" ] || fail "symlink source was moved or removed"
+[ ! -L "$symlink_source" ] || fail "symlink source type changed"
+assert_eq \
+  "$symlink_source_fingerprint" \
+  "$(cksum <"$symlink_source")" \
+  "symlink source fingerprint"
+cmp -s <(printf 'symlinked private runtime state\nsecond private line\n') "$symlink_source" ||
+  fail "symlink source content changed"
+
+shopt -s nullglob
+backups=("$target".bak.*)
+shopt -u nullglob
+[ "${#backups[@]}" -eq 3 ] || fail "expected exactly three timestamped backups"
+cmp -s <(printf 'private runtime state\n') "$first_backup" ||
+  fail "first backup changed after symlink backup"
+cmp -s "$TABBY_CONFIG" "$second_backup" ||
+  fail "second backup changed after symlink backup"
+[ -f "$target" ] || fail "replacement after symlink backup must be a regular file"
+[ ! -L "$target" ] || fail "replacement after symlink backup must not be a symlink"
+cmp -s "$TABBY_CONFIG" "$target" ||
+  fail "replacement after symlink backup differs from source"
+
 printf 'tabby config path, copy, and backup checks passed\n'
 
 assert_file_contains "$REPO_ROOT/bootstrap/common.sh" "install_tabby_linux()"
