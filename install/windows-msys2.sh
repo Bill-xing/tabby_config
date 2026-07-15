@@ -18,11 +18,11 @@ install_tmux_plugins
 install_config_payload
 
 if command -v winget.exe >/dev/null 2>&1; then
-  log "Installing WezTerm and Lazygit through winget"
-  winget.exe install -e --id Wez.WezTerm --accept-package-agreements --accept-source-agreements || true
+  log "Installing Tabby and Lazygit through winget"
+  winget.exe install -e --id Eugeny.Tabby --accept-package-agreements --accept-source-agreements || true
   winget.exe install -e --id JesseDuffield.lazygit --accept-package-agreements --accept-source-agreements || true
 else
-  warn "winget.exe not found; install WezTerm and Lazygit manually on Windows"
+  warn "winget.exe not found; install Tabby and Lazygit manually on Windows"
 fi
 
-log "Done. Start WezTerm and point it at MSYS2 zsh if needed"
+log "Done. Start Tabby and point it at MSYS2 zsh if needed"

@@ -43,6 +43,7 @@ fi
 install_neovim_linux
 install_lazygit_linux
 install_yazi_linux
+install_tabby_linux
 
 mkdir -p "$HOME/.local/bin"
 if command -v batcat >/dev/null 2>&1 && ! command -v bat >/dev/null 2>&1; then
@@ -52,12 +53,8 @@ if command -v fdfind >/dev/null 2>&1 && ! command -v fd >/dev/null 2>&1; then
   ln -sf "$(command -v fdfind)" "$HOME/.local/bin/fd"
 fi
 
-ensure_wezterm_apt_repo
-run_root apt-get update
-run_root apt-get install -y wezterm
-
 install_oh_my_zsh_stack
 install_tmux_plugins
 install_config_payload
 
-log "Done. Make zsh your default shell with: chsh -s $(command -v zsh)"
+log "Done. Start Tabby and make zsh your default shell with: chsh -s $(command -v zsh)"

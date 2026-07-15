@@ -17,6 +17,23 @@ assert_eq() {
   [ "$actual" = "$expected" ] || fail "$message: expected '$expected', got '$actual'"
 }
 
+assert_file_contains() {
+  local path="$1"
+  local expected="$2"
+
+  grep -F -- "$expected" "$path" >/dev/null ||
+    fail "expected $path to contain: $expected"
+}
+
+assert_file_not_contains_ci() {
+  local path="$1"
+  local forbidden="$2"
+
+  if grep -Fi -- "$forbidden" "$path" >/dev/null; then
+    fail "expected $path not to contain: $forbidden"
+  fi
+}
+
 ruby - "$TABBY_CONFIG" <<'RUBY'
 require "yaml"
 require "json"
@@ -223,3 +240,22 @@ cmp -s "$TABBY_CONFIG" "$second_backup" ||
 cmp -s "$TABBY_CONFIG" "$target" || fail "replacement config differs from source"
 
 printf 'tabby config path, copy, and backup checks passed\n'
+
+assert_file_contains "$REPO_ROOT/bootstrap/common.sh" "install_tabby_linux()"
+assert_file_contains "$REPO_ROOT/bootstrap/common.sh" "Eugeny/tabby"
+assert_file_not_contains_ci "$REPO_ROOT/bootstrap/common.sh" "ensure_wezterm_apt_repo"
+assert_file_not_contains_ci "$REPO_ROOT/bootstrap/common.sh" "apt.fury.io/wez"
+
+assert_file_contains "$REPO_ROOT/install/macos.sh" "brew install --cask tabby"
+assert_file_not_contains_ci "$REPO_ROOT/install/macos.sh" "wezterm"
+
+assert_file_contains "$REPO_ROOT/install/ubuntu.sh" "install_tabby_linux"
+assert_file_not_contains_ci "$REPO_ROOT/install/ubuntu.sh" "wezterm"
+
+assert_file_contains "$REPO_ROOT/install/windows-msys2.sh" "Eugeny.Tabby"
+assert_file_not_contains_ci "$REPO_ROOT/install/windows-msys2.sh" "wezterm"
+
+assert_file_contains "$REPO_ROOT/install/windows.ps1" "Eugeny.Tabby"
+assert_file_not_contains_ci "$REPO_ROOT/install/windows.ps1" "wezterm"
+
+printf 'cross-platform Tabby installer checks passed\n'

@@ -358,19 +358,23 @@ install_yazi_linux() {
   install -m 0755 "$unpacked/ya" "$HOME/.local/bin/ya"
 }
 
-ensure_wezterm_apt_repo() {
-  local keyring="/usr/share/keyrings/wezterm-fury.gpg"
-  local list_file="/etc/apt/sources.list.d/wezterm.list"
+install_tabby_linux() {
+  local arch pattern url tmp_dir asset_name
 
-  if [ ! -f "$keyring" ]; then
-    log "Adding WezTerm apt repository"
-    curl -fsSL https://apt.fury.io/wez/gpg.key | run_root gpg --dearmor -o "$keyring"
-    run_root chmod 0644 "$keyring"
-  fi
+  arch="$(linux_arch)"
+  case "$arch" in
+    x86_64) pattern='tabby-[0-9.]+-linux-x64\.deb$' ;;
+    arm64) pattern='tabby-[0-9.]+-linux-arm64\.deb$' ;;
+  esac
 
-  if [ ! -f "$list_file" ]; then
-    printf 'deb [signed-by=%s] https://apt.fury.io/wez/ * *\n' "$keyring" | run_root tee "$list_file" >/dev/null
-  fi
+  url="$(github_latest_asset_url 'Eugeny/tabby' "$pattern")"
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "$tmp_dir"' RETURN
+  asset_name="$(basename "$url")"
+
+  log "Installing Tabby from $url"
+  fetch_url "$url" "$tmp_dir/$asset_name"
+  run_root apt-get install -y "$tmp_dir/$asset_name"
 }
 
 msys2_mingw_prefix() {

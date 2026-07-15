@@ -13,7 +13,7 @@ function Require-Winget {
 Require-Winget
 
 winget.exe install -e --id MSYS2.MSYS2 --accept-package-agreements --accept-source-agreements
-winget.exe install -e --id Wez.WezTerm --accept-package-agreements --accept-source-agreements
+winget.exe install -e --id Eugeny.Tabby --accept-package-agreements --accept-source-agreements
 winget.exe install -e --id JesseDuffield.lazygit --accept-package-agreements --accept-source-agreements
 
 $bash = 'C:\msys64\usr\bin\bash.exe'
