@@ -1,6 +1,6 @@
 # Cross-platform terminal dotfiles
 
-这一套仓库把当前使用的 `tmux`、`zsh`、`oh-my-zsh`、`powerlevel10k`、`LazyVim`、`lazygit`、`yazi`、`WezTerm` 配置整理成可迁移的 dotfiles，并提供三套安装入口。
+这一套仓库把当前使用的 `tmux`、`zsh`、`oh-my-zsh`、`powerlevel10k`、`LazyVim`、`lazygit`、`yazi`、`Tabby` 配置整理成可迁移的 dotfiles，并提供三套安装入口。
 
 当前这版额外统一了一套面向终端工作流的方向键习惯：
 
@@ -24,7 +24,7 @@
 - `config/lazygit/config.yml`: lazygit 用户配置，当前迁移 `delta` pager
 - `config/yazi/yazi.toml`: yazi 功能配置
 - `config/yazi/keymap.toml`: yazi 自定义键位，采用 `ikjl` 导航
-- `config/wezterm/wezterm.lua`: WezTerm 跨平台配置
+- `config/tabby/config.yaml`: 经过隐私清理的 Tabby 配置快照
 - `bootstrap/plugins.lock.sh`: 第三方主题 / 插件固定版本
 - `bootstrap/common.sh`: 公共安装函数
 - `bootstrap/github_release_asset.py`: GitHub Release 资产解析工具
@@ -34,8 +34,9 @@
 - 仓库只跟踪你自己的配置，不直接 vendoring 整个 `oh-my-zsh`、`powerlevel10k`、tmux TPM 插件目录。
 - 第三方依赖在安装阶段按 `bootstrap/plugins.lock.sh` 里的固定 commit 拉取。
 - `lazygit` 只迁移用户配置 `config.yml`，不迁移运行态 `state.yml`。
-- Windows 方案以 MSYS2 为 Unix 工具栈，WezTerm 和 Lazygit 通过 `winget` 安装。
-- 安装默认在 Unix 上使用软链接，在 Windows / MSYS2 上默认复制文件；可通过 `DOTFILES_LINK_MODE=symlink|copy` 覆盖。
+- Windows 方案以 MSYS2 为 Unix 工具栈，Tabby 和 Lazygit 通过 `winget` 安装。
+- 普通 dotfiles 默认在 Unix 上使用软链接，在 Windows / MSYS2 上默认复制文件；可通过 `DOTFILES_LINK_MODE=symlink|copy` 覆盖。
+- Tabby 是特例：无论 `DOTFILES_LINK_MODE` 如何设置，都强制复制为普通文件，绝不创建符号链接。如果目标已存在，安装器会先在同目录备份为 `config.yaml.bak.<timestamp>`；同一秒内发生命名冲突时依次追加 `.1`、`.2` 等后缀。
 
 ## 快速开始
 
@@ -48,10 +49,11 @@ cd /path/to/this/repo
 
 安装内容：
 
-- Homebrew: `tmux` `neovim` `lazygit` `yazi` `wezterm` `direnv` `eza` `bat` `fzf` `ripgrep` `fd`
+- Homebrew: `tmux` `neovim` `lazygit` `yazi` `direnv` `eza` `bat` `fzf` `ripgrep` `fd`
+- Tabby cask: `brew install --cask tabby`
 - 可选 Nerd Font: `font-jetbrains-mono-nerd-font`
 - 固定版本的 `oh-my-zsh` / `powerlevel10k` / zsh 插件 / tmux 插件
-- 当前 dotfiles 到 `~/.zshrc` `~/.p10k.zsh` `~/.tmux.conf` `~/.wezterm.lua` `~/.config/*`
+- 当前 dotfiles 到 `~/.zshrc` `~/.p10k.zsh` `~/.tmux.conf` `~/.config/*`；Tabby 配置复制到 `$HOME/Library/Application Support/tabby/config.yaml`
 
 ### 2. Ubuntu
 
@@ -65,7 +67,8 @@ cd /path/to/this/repo
 - `apt`: 基础构建工具、`git`、`curl`、`zsh`、`tmux`、`fzf`、`fd-find`、`ripgrep`、`jq`、`unzip` 等
 - Neovim: 官方最新 release 预编译包，安装到 `~/.local/opt/nvim`
 - Lazygit / Yazi: GitHub Release 最新官方二进制
-- WezTerm: 通过官方 apt 仓库安装
+- Tabby: 从 `Eugeny/tabby` 最新 GitHub Release 中按 `x86_64` / `arm64` 架构选择 `.deb` 安装包
+- Tabby 配置复制到 `${XDG_CONFIG_HOME:-$HOME/.config}/tabby/config.yaml`
 - Ubuntu 兼容补丁：如果系统只提供 `batcat` / `fdfind`，会自动补 `~/.local/bin/bat` 和 `~/.local/bin/fd`
 
 执行完成后建议：
@@ -95,11 +98,12 @@ cd /c/path/to/repo
 
 - MSYS2 包：`zsh` `tmux` `git` `curl` `file` `neovim` `ripgrep` `fd` `fzf` `yazi`
 - 可选包（若仓库中存在）：`bat` `eza` `direnv` `jq` `python`
-- `winget`: `WezTerm`、`Lazygit`
+- `winget`: `Eugeny.Tabby`、`JesseDuffield.lazygit`
 - 配置镜像：
-  - `~/.zshrc` `~/.p10k.zsh` `~/.tmux.conf` `~/.wezterm.lua`
+  - `~/.zshrc` `~/.p10k.zsh` `~/.tmux.conf`
   - `~/.config/nvim` / `~/.config/yazi` / `~/.config/lazygit`
   - 同时同步到 Windows 原生程序常用位置：`%LOCALAPPDATA%\nvim`、`%APPDATA%\yazi\config`、`%APPDATA%\lazygit`
+  - Tabby 配置复制到 `%APPDATA%\Tabby\config.yaml`
 
 ## 平台兼容处理
 
@@ -158,15 +162,13 @@ cd /c/path/to/repo
 - 当前配置把 git pager 设为 `delta --dark --paging=never`，优先使用 side-by-side + line numbers，兼容项保留普通 line numbers。
 - 安装脚本会部署到 `~/.config/lazygit`；Windows / MSYS2 下也会同步到 `%APPDATA%\lazygit`。
 
-### WezTerm
+### Tabby
 
-`config/wezterm/wezterm.lua` 做了这些处理：
+`config/tabby/config.yaml` 是当前 Tabby 设置的公开、经过隐私清理的快照，不是完整的运行时状态导出。快照保留了 AdventureTime 主题、20 号字体、0.84 透明度、背景活力效果和当前快捷键。
 
-- 根据 `wezterm.target_triple` 自动判断 macOS / Windows / Linux
-- 保留当前 tab 标题、Catppuccin 配色、透明度、鼠标行为
-- macOS 专属项仅在 macOS 启用：`CMD` 快捷键风格、背景模糊、原生全屏
-- Windows 下优先把默认 shell 指向 `C:/msys64/usr/bin/zsh.exe`
-- Linux / Windows 把主要快捷键切到 `CTRL+SHIFT`
+仓库刻意排除了设备、账户、SSH 主机、同步或保管库等私密状态，不应把此文件当作本机 Tabby 全部数据的原样备份。
+
+由于 Tabby 退出时可能重写配置，部署前请关闭 Tabby。部署始终是“备份旧文件、再复制公开快照”，不会把应用正在写入的配置直接链接回 Git 工作树。
 
 ## 固定版本依赖
 
@@ -195,7 +197,7 @@ tmux source-file ~/.tmux.conf
 nvim --version
 yazi --version
 lazygit --version
-wezterm -V
+tabby --version
 ```
 
 如果你已经在当前机器上更新过仓库配置，也可以重点检查这两项：
@@ -216,3 +218,4 @@ PY
 - `LazyVim` 首次启动会自动拉取 `lazy.nvim` 和插件，需要联网。
 - Ubuntu / Windows 上字体不会强制自动安装；如果希望图标完整，建议安装 `JetBrainsMono Nerd Font`。
 - `lazygit` 的 `state.yml` 是本机运行态数据，仓库只迁移 `config.yml`。
+- Tabby 配置只会复制；每次目标已存在时都会先在同目录生成带时间戳的备份。运行任何安装入口前，请先关闭 Tabby。

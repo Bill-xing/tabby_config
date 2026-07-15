@@ -34,6 +34,10 @@ assert_file_not_contains_ci() {
   fi
 }
 
+README="$REPO_ROOT/README.md"
+SHORTCUT_GUIDE="$REPO_ROOT/当前环境常用快捷键速查.md"
+LAZYGIT_GUIDE="$REPO_ROOT/lazygit操作指南.md"
+
 ruby - "$TABBY_CONFIG" <<'RUBY'
 require "yaml"
 require "json"
@@ -259,3 +263,39 @@ assert_file_contains "$REPO_ROOT/install/windows.ps1" "Eugeny.Tabby"
 assert_file_not_contains_ci "$REPO_ROOT/install/windows.ps1" "wezterm"
 
 printf 'cross-platform Tabby installer checks passed\n'
+
+for production_doc in "$README" "$SHORTCUT_GUIDE" "$LAZYGIT_GUIDE"; do
+  assert_file_not_contains_ci "$production_doc" "wezterm"
+done
+
+assert_file_contains "$README" "Tabby"
+assert_file_contains "$README" 'config/tabby/config.yaml'
+assert_file_contains "$README" 'brew install --cask tabby'
+assert_file_contains "$README" 'Eugeny/tabby'
+assert_file_contains "$README" 'Eugeny.Tabby'
+assert_file_contains "$README" '${XDG_CONFIG_HOME:-$HOME/.config}/tabby/config.yaml'
+assert_file_contains "$README" '$HOME/Library/Application Support/tabby/config.yaml'
+assert_file_contains "$README" '%APPDATA%\Tabby\config.yaml'
+assert_file_contains "$README" '强制复制为普通文件，绝不创建符号链接'
+assert_file_contains "$README" 'config.yaml.bak.<timestamp>'
+assert_file_contains "$README" '.1`、`.2'
+assert_file_contains "$README" '部署前请关闭 Tabby'
+assert_file_contains "$README" '设备、账户、SSH 主机、同步或保管库'
+assert_file_contains "$README" 'tabby --version'
+
+assert_file_contains "$SHORTCUT_GUIDE" 'Tabby | `1.0.234`'
+assert_file_contains "$SHORTCUT_GUIDE" 'config/tabby/config.yaml'
+assert_file_contains "$SHORTCUT_GUIDE" '${XDG_CONFIG_HOME:-$HOME/.config}/tabby/config.yaml'
+assert_file_contains "$SHORTCUT_GUIDE" '$HOME/Library/Application Support/tabby/config.yaml'
+assert_file_contains "$SHORTCUT_GUIDE" '%APPDATA%\Tabby\config.yaml'
+assert_file_contains "$SHORTCUT_GUIDE" '### 4.2 窗口与标签'
+assert_file_contains "$SHORTCUT_GUIDE" '### 4.3 编辑、搜索与滚动'
+assert_file_contains "$SHORTCUT_GUIDE" '### 4.4 分屏'
+assert_file_contains "$SHORTCUT_GUIDE" '`Ctrl-Space`'
+assert_file_contains "$SHORTCUT_GUIDE" '`Alt-1` 到 `Alt-0`'
+assert_file_contains "$SHORTCUT_GUIDE" '`Ctrl-Shift-P`'
+assert_file_contains "$SHORTCUT_GUIDE" '`Ctrl-Shift-C` / `Ctrl-Shift-V`'
+assert_file_contains "$SHORTCUT_GUIDE" '`Ctrl-Shift-S` / `Ctrl-Shift-D`'
+assert_file_contains "$SHORTCUT_GUIDE" '`Ctrl-Alt-Enter`'
+
+printf 'Tabby production documentation checks passed\n'
