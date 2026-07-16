@@ -231,6 +231,15 @@ bash tests/test_tabby_plugin_install.sh
 
 Expected: non-zero exit because `TABBY_OSC_NOTIFY_NAME` or `tabby_plugins_path` is not defined yet.
 
+- [ ] **Step 4: Commit the verified red contract**
+
+```bash
+git add tests/test_tabby_plugin_install.sh
+git commit -m "test: define Tabby OSC notify install contract"
+```
+
+Expected: the commit contains only the new executable test; its focused run remains red for the expected missing-feature reason.
+
 ### Task 2: Implement the pinned safe installer
 
 **Files:**
