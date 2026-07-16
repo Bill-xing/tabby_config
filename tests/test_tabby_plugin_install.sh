@@ -383,4 +383,9 @@ assert_eq \
   "$(wc -l <"$desktop_calls" | tr -d ' ')" \
   "desktop config payload Tabby call count"
 
+assert_file_contains "$REPO_ROOT/README.md" 'tabby-osc-notify@1.0.0'
+assert_file_contains "$REPO_ROOT/README.md" '自动安装'
+assert_file_contains "$REPO_ROOT/README.md" '重启 Tabby'
+assert_file_contains "$REPO_ROOT/README.md" '通知权限'
+
 printf 'Tabby OSC notify plugin install checks passed\n'
