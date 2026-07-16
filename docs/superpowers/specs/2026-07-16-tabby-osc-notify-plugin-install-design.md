@@ -123,4 +123,3 @@ printf '\033]9;Codex 通知测试\007'
 2. 基于最新 `origin/server` 应用同一实现，保留该分支已有的 Codex OSC 9、tmux
    passthrough、`terminal.bell: off` 和无 root 安装逻辑。
 3. 分别运行各分支的完整相关测试后更新 `origin/main` 与 `origin/server`。
-
