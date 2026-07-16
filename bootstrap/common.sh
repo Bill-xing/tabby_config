@@ -185,6 +185,92 @@ tabby_config_path() {
   esac
 }
 
+tabby_plugins_path() {
+  local platform="${1:-$(platform_name)}"
+  printf '%s\n' "$(dirname "$(tabby_config_path "$platform")")/plugins"
+}
+
+package_json_string_field() {
+  local field="$1"
+  local path="$2"
+
+  sed -n \
+    "s/^[[:space:]]*\"${field}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" \
+    "$path" | sed -n '1p'
+}
+
+tabby_osc_notify_package_is_valid() {
+  local target="$1"
+
+  [ -d "$target" ] &&
+    [ ! -L "$target" ] &&
+    [ -f "$target/package.json" ] &&
+    [ -f "$target/dist/index.js" ] &&
+    [ "$(package_json_string_field name "$target/package.json")" = "$TABBY_OSC_NOTIFY_NAME" ] &&
+    [ "$(package_json_string_field version "$target/package.json")" = "$TABBY_OSC_NOTIFY_VERSION" ]
+}
+
+sha256_file() {
+  local path="$1"
+
+  if have sha256sum; then
+    sha256sum "$path" | awk '{ print $1 }'
+  elif have shasum; then
+    shasum -a 256 "$path" | awk '{ print $1 }'
+  else
+    warn "Cannot verify SHA-256 (sha256sum or shasum is required)"
+    return 1
+  fi
+}
+
+tabby_plugin_archive_list_is_safe() {
+  local list_file="$1"
+  local entry saw_member=0
+
+  while IFS= read -r entry || [ -n "$entry" ]; do
+    [ -n "$entry" ] || return 1
+    case "$entry" in
+      /*|../*|*/../*|*/..|.|./*|*/./*|*/.) return 1 ;;
+    esac
+    case "$entry" in
+      package|package/*) saw_member=1 ;;
+      *) return 1 ;;
+    esac
+  done <"$list_file"
+
+  [ "$saw_member" -eq 1 ]
+}
+
+tabby_plugin_archive_types_are_safe() {
+  local list_file="$1"
+  local entry saw_member=0
+
+  while IFS= read -r entry || [ -n "$entry" ]; do
+    [ -n "$entry" ] || continue
+    case "$entry" in
+      -*|d*) saw_member=1 ;;
+      *) return 1 ;;
+    esac
+  done <"$list_file"
+
+  [ "$saw_member" -eq 1 ]
+}
+
+next_tabby_plugin_backup_path() {
+  local plugin_root="$1"
+  local package_name="$2"
+  local stamp backup suffix
+
+  stamp="$(date +%Y%m%d%H%M%S)"
+  backup="$plugin_root/backups/${package_name}.bak.${stamp}"
+  suffix=1
+  while [ -e "$backup" ] || [ -L "$backup" ]; do
+    backup="$plugin_root/backups/${package_name}.bak.${stamp}.${suffix}"
+    suffix=$((suffix + 1))
+  done
+  printf '%s\n' "$backup"
+}
+
 install_tabby_config() {
   local platform="${1:-$(platform_name)}"
   local source_file="$REPO_ROOT/config/tabby/config.yaml"
@@ -244,6 +330,102 @@ install_codex_notifications() {
   log "Installed Codex OSC 9 notifications in $target"
 }
 
+install_tabby_osc_notify() {
+  local platform="${1:-$(platform_name)}"
+  local plugin_root node_modules target tmp_dir archive archive_list archive_types
+  local unpacked staged actual_sha backup=""
+
+  plugin_root="$(tabby_plugins_path "$platform")"
+  node_modules="$plugin_root/node_modules"
+  target="$node_modules/$TABBY_OSC_NOTIFY_NAME"
+
+  if tabby_osc_notify_package_is_valid "$target"; then
+    log "Reusing $TABBY_OSC_NOTIFY_NAME@$TABBY_OSC_NOTIFY_VERSION"
+    return 0
+  fi
+
+  mkdir -p "$node_modules"
+  tmp_dir="$(mktemp -d "$plugin_root/.${TABBY_OSC_NOTIFY_NAME}.install.XXXXXX")"
+  trap 'rm -rf "$tmp_dir"; trap - RETURN' RETURN
+  archive="$tmp_dir/plugin.tgz"
+  archive_list="$tmp_dir/archive.list"
+  archive_types="$tmp_dir/archive.types"
+  unpacked="$tmp_dir/unpacked"
+
+  log "Installing $TABBY_OSC_NOTIFY_NAME@$TABBY_OSC_NOTIFY_VERSION"
+  if ! fetch_url "$TABBY_OSC_NOTIFY_TARBALL_URL" "$archive"; then
+    warn "Failed to download $TABBY_OSC_NOTIFY_TARBALL_URL"
+    return 1
+  fi
+  if ! actual_sha="$(sha256_file "$archive")"; then
+    return 1
+  fi
+  if [ "$actual_sha" != "$TABBY_OSC_NOTIFY_SHA256" ]; then
+    warn "SHA-256 mismatch for $TABBY_OSC_NOTIFY_NAME: $actual_sha"
+    return 1
+  fi
+  if ! tar -tzf "$archive" >"$archive_list"; then
+    warn "Cannot list $TABBY_OSC_NOTIFY_NAME archive"
+    return 1
+  fi
+  if ! tabby_plugin_archive_list_is_safe "$archive_list"; then
+    warn "Unsafe paths in $TABBY_OSC_NOTIFY_NAME archive"
+    return 1
+  fi
+  if ! LC_ALL=C tar -tvzf "$archive" >"$archive_types"; then
+    warn "Cannot inspect $TABBY_OSC_NOTIFY_NAME archive member types"
+    return 1
+  fi
+  if ! tabby_plugin_archive_types_are_safe "$archive_types"; then
+    warn "Unsafe member types in $TABBY_OSC_NOTIFY_NAME archive"
+    return 1
+  fi
+
+  mkdir -p "$unpacked"
+  if ! tar -xzf "$archive" -C "$unpacked"; then
+    warn "Cannot extract $TABBY_OSC_NOTIFY_NAME archive"
+    return 1
+  fi
+  staged="$unpacked/package"
+  if ! chmod -R u+rwX "$staged"; then
+    warn "Cannot repair permissions for $TABBY_OSC_NOTIFY_NAME"
+    return 1
+  fi
+  if ! tabby_osc_notify_package_is_valid "$staged"; then
+    warn "Unexpected package metadata for $TABBY_OSC_NOTIFY_NAME"
+    return 1
+  fi
+
+  if [ -e "$target" ] || [ -L "$target" ]; then
+    mkdir -p "$plugin_root/backups"
+    backup="$(next_tabby_plugin_backup_path "$plugin_root" "$TABBY_OSC_NOTIFY_NAME")"
+    log "Backing up $target -> $backup"
+    if ! mv "$target" "$backup"; then
+      warn "Cannot back up existing $TABBY_OSC_NOTIFY_NAME"
+      return 1
+    fi
+  fi
+
+  if ! mv "$staged" "$target"; then
+    if [ -n "$backup" ]; then
+      mv "$backup" "$target" || warn "Cannot restore $backup"
+    fi
+    warn "Cannot install $TABBY_OSC_NOTIFY_NAME into $target"
+    return 1
+  fi
+
+  log "Installed $TABBY_OSC_NOTIFY_NAME@$TABBY_OSC_NOTIFY_VERSION; restart Tabby to load it"
+}
+
+install_tabby_payload() {
+  if skip_tabby; then
+    log "Skipping Tabby config and plugins (DOTFILES_SKIP_TABBY is enabled)"
+  else
+    install_tabby_config
+    install_tabby_osc_notify
+  fi
+}
+
 install_config_payload() {
   local cfg
   cfg="$(config_home)"
@@ -254,11 +436,7 @@ install_config_payload() {
   link_or_copy "$REPO_ROOT/config/zsh/.p10k.zsh" "$HOME/.p10k.zsh"
   link_or_copy "$REPO_ROOT/config/tmux/.tmux.conf" "$HOME/.tmux.conf"
   link_or_copy "$REPO_ROOT/config/tmux-powerline" "$cfg/tmux-powerline"
-  if skip_tabby; then
-    log "Skipping Tabby config (DOTFILES_SKIP_TABBY is enabled)"
-  else
-    install_tabby_config
-  fi
+  install_tabby_payload
   link_or_copy "$REPO_ROOT/config/nvim" "$cfg/nvim"
   link_or_copy "$REPO_ROOT/config/yazi" "$cfg/yazi"
 

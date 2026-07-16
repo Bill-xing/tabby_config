@@ -35,7 +35,7 @@
 ## 设计约定
 
 - 仓库只跟踪你自己的配置，不直接 vendoring 整个 `oh-my-zsh`、`powerlevel10k`、tmux TPM 插件目录。
-- 第三方依赖在安装阶段按 `bootstrap/plugins.lock.sh` 里的固定 commit 拉取。
+- 第三方依赖在安装阶段按 `bootstrap/plugins.lock.sh` 里的固定 commit，或固定版本和校验和安装。
 - `lazygit` 只迁移用户配置 `config.yml`，不迁移运行态 `state.yml`。
 - Windows 方案以 MSYS2 为 Unix 工具栈，Tabby 和 Lazygit 通过 `winget` 安装。
 - 普通 dotfiles 默认在 Unix 上使用软链接，在 Windows / MSYS2 上默认复制文件；可通过 `DOTFILES_LINK_MODE=symlink|copy` 覆盖。
@@ -53,7 +53,7 @@ cd /path/to/this/repo
 安装内容：
 
 - Homebrew: `tmux` `neovim` `lazygit` `yazi` `direnv` `eza` `bat` `fzf` `ripgrep` `fd`
-- Tabby cask: `brew install --cask tabby`
+- Tabby cask: `brew install --cask tabby`；标准桌面安装脚本会自动安装 `tabby-osc-notify@1.0.0`
 - 可选 Nerd Font: `font-jetbrains-mono-nerd-font`
 - 固定版本的 `oh-my-zsh` / `powerlevel10k` / zsh 插件 / tmux 插件
 - 当前 dotfiles 到 `~/.zshrc` `~/.p10k.zsh` `~/.tmux.conf` `~/.config/*`，其中 tmux-powerline 部署到 `${XDG_CONFIG_HOME:-$HOME/.config}/tmux-powerline`；Tabby 配置复制到 `$HOME/Library/Application Support/tabby/config.yaml`
@@ -89,7 +89,7 @@ DOTFILES_SKIP_TABBY=1 ./install/ubuntu.sh
 - Neovim: 官方最新 release 预编译包，安装到 `~/.local/opt/nvim`
 - Lazygit / Yazi: GitHub Release 最新官方二进制
 - tmux-powerline 用户配置部署到 `${XDG_CONFIG_HOME:-$HOME/.config}/tmux-powerline`
-- Tabby: 从 `Eugeny/tabby` 最新 GitHub Release 中按 `x86_64` / `arm64` 架构选择 `.deb` 安装包
+- Tabby: 从 `Eugeny/tabby` 最新 GitHub Release 中按 `x86_64` / `arm64` 架构选择 `.deb` 安装包；标准桌面安装脚本会自动安装 `tabby-osc-notify@1.0.0`
 - Tabby 配置复制到 `${XDG_CONFIG_HOME:-$HOME/.config}/tabby/config.yaml`
 - Ubuntu 兼容补丁：如果系统只提供 `batcat` / `fdfind`，会自动补 `~/.local/bin/bat` 和 `~/.local/bin/fd`
 
@@ -120,7 +120,7 @@ cd /c/path/to/repo
 
 - MSYS2 包：`zsh` `tmux` `git` `curl` `file` `neovim` `ripgrep` `fd` `fzf` `yazi`
 - 可选包（若仓库中存在）：`bat` `eza` `direnv` `jq` `python`
-- `winget`: `Eugeny.Tabby`、`JesseDuffield.lazygit`
+- `winget`: `Eugeny.Tabby`、`JesseDuffield.lazygit`；标准桌面安装脚本会自动安装 `tabby-osc-notify@1.0.0`
 - 配置镜像：
   - `~/.zshrc` `~/.p10k.zsh` `~/.tmux.conf`
   - `~/.config/tmux-powerline` / `~/.config/nvim` / `~/.config/yazi` / `~/.config/lazygit`
@@ -194,7 +194,11 @@ cd /c/path/to/repo
 
 白名单明确排除设备和账户数据、根级 `ssh`、SSH known-host、连接 `profile`、同步信息 `configSync`、`vault`、令牌、密码、密钥路径以及 Electron 运行态数据。因此，这个文件不是本机 Tabby 全部数据的原样备份。
 
-> **安全警告：** 不要把本机完整的 Tabby `config.yaml` 直接复制回仓库。更新快照时，必须重新执行字段白名单筛选，只写入允许公开的字段。
+macOS、Ubuntu 和 Windows/MSYS2 的标准桌面安装脚本会从锁定的 tarball URL 下载 `tabby-osc-notify@1.0.0`，按固定 SHA-256 校验和验证后直接解包到 Tabby 的运行态 `plugins/` 目录；这个流程不要求系统预装 Node.js 或 npm。
+
+安装期间必须保持 Tabby 完全关闭；安装完成后重启 Tabby，插件才会被加载。操作系统的通知权限必须允许 Tabby 发送通知；安装器不会申请或修改通知权限。
+
+> **安全警告：** 本机完整的 Tabby `config.yaml` 和运行态 `plugins/` 目录都不提交到仓库。不要把本机完整的 Tabby `config.yaml` 直接复制回仓库；更新快照时，必须重新执行字段白名单筛选，只写入允许公开的字段。
 
 由于 Tabby 退出时可能重写配置，部署前请关闭 Tabby。部署始终是“备份旧文件、再复制公开快照”，不会把应用正在写入的配置直接链接回 Git 工作树。
 
@@ -213,10 +217,10 @@ notification_condition = "always"
 
 本地电脑还需要完成一次 Tabby 设置：
 
-1. 打开 **设置 → 插件**，搜索并安装第三方插件 `tabby-osc-notify`，然后重启 Tabby。
-2. 在操作系统设置中允许 Tabby 发送通知。
-3. 保持 Tabby 的 **Terminal bell** 为 **Off**；该链路使用 OSC 9，不会播放铃声。
-4. 重新启动服务器上的 Codex，使新的 TUI 配置生效。
+标准 macOS、Ubuntu 和 Windows/MSYS2 安装入口会自动安装校验和锁定的 tabby-osc-notify@1.0.0；完成后重启 Tabby，并在操作系统设置中允许 Tabby 发送通知。
+
+1. 保持 Tabby 的 **Terminal bell** 为 **Off**；该链路使用 OSC 9，不会播放铃声。
+2. 重新启动服务器上的 Codex，使新的 TUI 配置生效。
 
 tmux 配置会用安静模式启用 `allow-passthrough`：tmux 3.2a 会忽略未知选项，支持该
 选项的新版本则会开启 OSC 透传。在 tmux 内可执行以下命令测试完整链路：
@@ -243,8 +247,9 @@ Tabby 的通知链路可用。Tabby 插件属于本地运行态，按仓库隐�
 - `tmux-resurrect`
 - `tmux-continuum`
 - `erikw/tmux-powerline`
+- `tabby-osc-notify@1.0.0`
 
-如果后续你在本机更新了这些插件，想把新版本固定进仓库，只需要更新对应 commit。
+如果后续你在本机更新了这些插件，想把新版本固定进仓库，需要更新对应 commit；对于 Tabby 插件，还要同步更新版本、tarball URL 和 SHA-256 校验和。
 
 ## 建议验证
 

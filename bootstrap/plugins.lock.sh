@@ -29,3 +29,8 @@ export TMUX_CONTINUUM_REF="0698e8f4b17d6454c71bf5212895ec055c578da0"
 
 export TMUX_POWERLINE_REPO="https://github.com/erikw/tmux-powerline.git"
 export TMUX_POWERLINE_REF="d70011158dc389070d6ed7a67b65367206b6ddec"
+
+export TABBY_OSC_NOTIFY_NAME="tabby-osc-notify"
+export TABBY_OSC_NOTIFY_VERSION="1.0.0"
+export TABBY_OSC_NOTIFY_TARBALL_URL="https://registry.npmjs.org/tabby-osc-notify/-/tabby-osc-notify-1.0.0.tgz"
+export TABBY_OSC_NOTIFY_SHA256="a48fad95d94768b683f273397d7d818c526de969b3247c430bd309b3b0bb36d8"

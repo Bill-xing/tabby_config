@@ -104,7 +104,7 @@ assert(
 
 terminal = config.fetch("terminal")
 assert(terminal["fontSize"] == 20, "fontSize must be 20")
-assert(terminal["bell"] == "off", "terminal bell must remain off")
+assert(terminal["bell"] == false, "terminal bell must remain off")
 assert(terminal.dig("colorScheme", "name") == "AdventureTime", "dark scheme must be AdventureTime")
 assert(
   terminal.dig("colorScheme", "colors") == [

@@ -30,6 +30,15 @@ assert_file_contains() {
     fail "expected $path to contain: $expected"
 }
 
+assert_file_not_contains() {
+  local path="$1"
+  local unexpected="$2"
+
+  if grep -F -- "$unexpected" "$path" >/dev/null; then
+    fail "expected $path not to contain: $unexpected"
+  fi
+}
+
 [ -f "$FRAGMENT" ] || fail "missing Codex notification fragment"
 assert_eq "1" "$(grep -c '^\[tui\]$' "$FRAGMENT")" "fragment [tui] table count"
 assert_file_contains \
@@ -227,7 +236,14 @@ printf 'Codex notification install and backup checks passed\n'
 
 assert_file_contains "$TABBY_CONFIG" '  bell: off'
 assert_file_contains "$TMUX_CONFIG" 'set -gq allow-passthrough on'
-assert_file_contains "$README" 'tabby-osc-notify'
+assert_file_contains "$README" 'tabby-osc-notify@1.0.0'
+assert_file_contains "$README" '自动安装'
+assert_file_contains "$README" '重启 Tabby'
+assert_file_contains "$README" '通知权限'
+assert_file_contains \
+  "$README" \
+  '标准 macOS、Ubuntu 和 Windows/MSYS2 安装入口会自动安装校验和锁定的 tabby-osc-notify@1.0.0；完成后重启 Tabby，并在操作系统设置中允许 Tabby 发送通知。'
+assert_file_not_contains "$README" '搜索并安装第三方插件'
 assert_file_contains "$README" 'notifications = ["agent-turn-complete", "approval-requested"]'
 assert_file_contains "$README" 'notification_method = "osc9"'
 assert_file_contains "$README" 'notification_condition = "always"'
