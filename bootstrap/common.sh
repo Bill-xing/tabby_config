@@ -224,7 +224,7 @@ tabby_plugin_archive_list_is_safe() {
   local entry saw_member=0
 
   while IFS= read -r entry || [ -n "$entry" ]; do
-    [ -n "$entry" ] || continue
+    [ -n "$entry" ] || return 1
     case "$entry" in
       /*|../*|*/../*|*/..|.|./*|*/./*|*/.) return 1 ;;
     esac

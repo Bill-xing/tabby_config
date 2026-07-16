@@ -96,11 +96,16 @@ assert_eq \
 
 safe_list="$tmp_dir/safe.list"
 unsafe_list="$tmp_dir/unsafe.list"
+empty_member_list="$tmp_dir/empty-member.list"
 printf '%s\n' 'package/' 'package/package.json' 'package/dist/index.js' >"$safe_list"
 printf '%s\n' 'package/' 'package/../escape' >"$unsafe_list"
+printf '%s\n' 'package/' '' 'package/package.json' >"$empty_member_list"
 tabby_plugin_archive_list_is_safe "$safe_list" || fail "safe archive list was rejected"
 if tabby_plugin_archive_list_is_safe "$unsafe_list"; then
   fail "unsafe archive list was accepted"
+fi
+if tabby_plugin_archive_list_is_safe "$empty_member_list"; then
+  fail "archive list with an empty member was accepted"
 fi
 
 write_fixture_package() {
