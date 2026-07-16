@@ -203,11 +203,53 @@ install_tabby_config() {
   cp "$source_file" "$target"
 }
 
+install_codex_notifications() {
+  local source_file="$REPO_ROOT/config/codex/tabby-notifications.toml"
+  local merger="$REPO_ROOT/bootstrap/merge_codex_tui_config.py"
+  local codex_home target temp_file
+
+  if ! have codex; then
+    log "Skipping Codex notifications (codex is not installed)"
+    return 0
+  fi
+  if ! have python3; then
+    warn "Skipping Codex notifications (python3 is required to merge config.toml safely)"
+    return 0
+  fi
+
+  [ -f "$source_file" ] || die "missing Codex notification config: $source_file"
+  [ -f "$merger" ] || die "missing Codex TUI config merger: $merger"
+
+  codex_home="${CODEX_HOME:-$HOME/.codex}"
+  target="$codex_home/config.toml"
+  mkdir -p "$codex_home"
+  temp_file="$(mktemp "${target}.tmp.XXXXXX")"
+
+  if [ -e "$target" ] || [ -L "$target" ]; then
+    if ! python3 "$merger" "$source_file" "$target" >"$temp_file"; then
+      rm -f "$temp_file"
+      die "failed to merge Codex notification config into $target"
+    fi
+    if cmp -s "$temp_file" "$target"; then
+      rm -f "$temp_file"
+      return 0
+    fi
+    backup_existing "$target"
+  elif ! python3 "$merger" "$source_file" >"$temp_file"; then
+    rm -f "$temp_file"
+    die "failed to create Codex notification config"
+  fi
+
+  mv "$temp_file" "$target"
+  log "Installed Codex OSC 9 notifications in $target"
+}
+
 install_config_payload() {
   local cfg
   cfg="$(config_home)"
 
   ensure_base_dirs
+  install_codex_notifications
   link_or_copy "$REPO_ROOT/config/zsh/.zshrc" "$HOME/.zshrc"
   link_or_copy "$REPO_ROOT/config/zsh/.p10k.zsh" "$HOME/.p10k.zsh"
   link_or_copy "$REPO_ROOT/config/tmux/.tmux.conf" "$HOME/.tmux.conf"

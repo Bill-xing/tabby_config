@@ -219,6 +219,7 @@ terminal:
       - '#ffffff'
   customColorSchemes: []
   fontSize: 20
+  bell: off
 clickableLinks: {}
 accessibility: {}
 appearance:

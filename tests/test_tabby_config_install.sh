@@ -57,7 +57,7 @@ assert(
 )
 snapshot_digest = Digest::SHA256.hexdigest(canonical_config)
 assert(
-  snapshot_digest == "7ff19c05e513d74db10be6a7f888313ea5a66acb1cda858fedbd2ce69d86e137",
+  snapshot_digest == "e78b22de721a2e74fdeb17bf33cf7cfc4fd469a32a44b0796936854283aa8020",
   "public Tabby snapshot bytes changed: #{snapshot_digest}",
 )
 config = YAML.safe_load(canonical_config, aliases: false)
@@ -104,6 +104,7 @@ assert(
 
 terminal = config.fetch("terminal")
 assert(terminal["fontSize"] == 20, "fontSize must be 20")
+assert(terminal["bell"] == "off", "terminal bell must remain off")
 assert(terminal.dig("colorScheme", "name") == "AdventureTime", "dark scheme must be AdventureTime")
 assert(
   terminal.dig("colorScheme", "colors") == [

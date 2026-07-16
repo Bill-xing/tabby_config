@@ -198,6 +198,37 @@ cd /c/path/to/repo
 
 由于 Tabby 退出时可能重写配置，部署前请关闭 Tabby。部署始终是“备份旧文件、再复制公开快照”，不会把应用正在写入的配置直接链接回 Git 工作树。
 
+### Codex 经 SSH/tmux 发送无声桌面通知
+
+仓库会在检测到 `codex` 时，把 `config/codex/tabby-notifications.toml` 中的三个通知键
+安全合并到 `${CODEX_HOME:-$HOME/.codex}/config.toml`。原有模型、权限和项目设置会
+保留；内容发生变化时会先生成时间戳备份，重复运行且内容不变时不会重复备份。
+
+```toml
+[tui]
+notifications = ["agent-turn-complete", "approval-requested"]
+notification_method = "osc9"
+notification_condition = "always"
+```
+
+本地电脑还需要完成一次 Tabby 设置：
+
+1. 打开 **设置 → 插件**，搜索并安装第三方插件 `tabby-osc-notify`，然后重启 Tabby。
+2. 在操作系统设置中允许 Tabby 发送通知。
+3. 保持 Tabby 的 **Terminal bell** 为 **Off**；该链路使用 OSC 9，不会播放铃声。
+4. 重新启动服务器上的 Codex，使新的 TUI 配置生效。
+
+tmux 配置会用安静模式启用 `allow-passthrough`：tmux 3.2a 会忽略未知选项，支持该
+选项的新版本则会开启 OSC 透传。在 tmux 内可执行以下命令测试完整链路：
+
+```bash
+printf '\033Ptmux;\033\033]9;Codex 通知测试\007\033\\'
+```
+
+系统弹出“Codex 通知测试”且没有声音，即表示远端 Codex → tmux → SSH → 本地
+Tabby 的通知链路可用。Tabby 插件属于本地运行态，按仓库隐私约定不提交其
+`plugins/` 目录。
+
 ## 固定版本依赖
 
 当前锁定的关键三方版本都在 `bootstrap/plugins.lock.sh`：

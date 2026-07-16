@@ -1,0 +1,4 @@
+[tui]
+notifications = ["agent-turn-complete", "approval-requested"]
+notification_method = "osc9"
+notification_condition = "always"
