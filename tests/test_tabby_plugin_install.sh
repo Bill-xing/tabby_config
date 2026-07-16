@@ -139,11 +139,32 @@ make_unsafe_symlink_fixture() {
   tar -czf "$output" -C "$root" package
 }
 
+make_unsafe_hardlink_fixture() {
+  local output="$1"
+  local root="${output}.root"
+  local marker="$root/package/dist/hardlink-marker"
+  local hardlink="$root/package/dist/hardlink-alias"
+  local marker_inode
+  local hardlink_inode
+
+  write_fixture_package "$root" "tabby-osc-notify" "1.0.0" yes
+  printf '%s\n' 'hardlink fixture marker' >"$marker"
+  ln "$marker" "$hardlink"
+  marker_inode="$(ls -di "$marker" | awk '{print $1}')"
+  hardlink_inode="$(ls -di "$hardlink" | awk '{print $1}')"
+  assert_eq "$marker_inode" "$hardlink_inode" "hardlink fixture inode"
+  tar -czf "$output" -C "$root" package
+  LC_ALL=C tar -tvzf "$output" |
+    grep '^h.* package/dist/hardlink-' >/dev/null ||
+    fail "hardlink fixture did not contain a tar hardlink member"
+}
+
 good_fixture="$tmp_dir/good.tgz"
 wrong_name_fixture="$tmp_dir/wrong-name.tgz"
 wrong_version_fixture="$tmp_dir/wrong-version.tgz"
 missing_entry_fixture="$tmp_dir/missing-entry.tgz"
 unsafe_symlink_fixture="$tmp_dir/unsafe-symlink.tgz"
+unsafe_hardlink_fixture="$tmp_dir/unsafe-hardlink.tgz"
 outside_sentinel="$tmp_dir/outside-sentinel"
 make_fixture "$good_fixture" "tabby-osc-notify" "1.0.0"
 make_fixture "$wrong_name_fixture" "tabby-wrong-plugin" "1.0.0"
@@ -151,6 +172,7 @@ make_fixture "$wrong_version_fixture" "tabby-osc-notify" "9.9.9"
 make_fixture "$missing_entry_fixture" "tabby-osc-notify" "1.0.0" no
 assert_path_missing "$outside_sentinel"
 make_unsafe_symlink_fixture "$unsafe_symlink_fixture" "$outside_sentinel"
+make_unsafe_hardlink_fixture "$unsafe_hardlink_fixture"
 
 good_fixture_sha="$(sha256_file "$good_fixture")"
 FIXTURE="$good_fixture"
@@ -304,6 +326,10 @@ assert_install_failure_preserves_target \
   "$(sha256_file "$unsafe_symlink_fixture")" \
   "unsafe symlink archive"
 assert_path_missing "$outside_sentinel"
+assert_install_failure_preserves_target \
+  "$unsafe_hardlink_fixture" \
+  "$(sha256_file "$unsafe_hardlink_fixture")" \
+  "unsafe hardlink archive"
 assert_file_contains "$other_plugin/marker" 'keep background'
 assert_file_contains "$plugin_root/package-lock.json" 'keep lock'
 
