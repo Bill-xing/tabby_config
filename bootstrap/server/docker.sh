@@ -51,6 +51,18 @@ if ! declare -F docker_dpkg_architecture >/dev/null 2>&1; then
   }
 fi
 
+if ! declare -F docker_system_cli_path >/dev/null 2>&1; then
+  docker_system_cli_path() {
+    printf '%s\n' /usr/bin/docker
+  }
+fi
+
+if ! declare -F docker_rootless_cli_path >/dev/null 2>&1; then
+  docker_rootless_cli_path() {
+    printf '%s\n' "$HOME/bin/docker"
+  }
+fi
+
 if ! declare -F docker_package_installed >/dev/null 2>&1; then
   docker_package_installed() {
     [ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null || true)" = installed ]
@@ -72,6 +84,65 @@ fi
 if ! declare -F run_rootless_docker_installer >/dev/null 2>&1; then
   run_rootless_docker_installer() {
     sh "$1"
+  }
+fi
+
+if ! declare -F docker_stage_plugin_file >/dev/null 2>&1; then
+  docker_stage_plugin_file() {
+    install -m 0755 "$1" "$2"
+  }
+fi
+
+if ! declare -F docker_plugin_atomic_move >/dev/null 2>&1; then
+  docker_plugin_atomic_move() {
+    mv "$1" "$2"
+  }
+fi
+
+if ! declare -F docker_system_file_status >/dev/null 2>&1; then
+  docker_system_file_status() {
+    run_docker_sudo sh -c '
+      path=$1
+      if [ -L "$path" ]; then
+        printf "%s\n" symlink
+      elif [ -f "$path" ]; then
+        printf "%s\n" regular
+      elif [ ! -e "$path" ]; then
+        printf "%s\n" absent
+      else
+        printf "%s\n" unsupported
+      fi
+    ' sh "$1"
+  }
+fi
+
+if ! declare -F docker_system_copy_file >/dev/null 2>&1; then
+  docker_system_copy_file() {
+    run_docker_sudo cp -a -- "$1" "$2"
+  }
+fi
+
+if ! declare -F docker_system_restore_file >/dev/null 2>&1; then
+  docker_system_restore_file() {
+    run_docker_sudo cp -a -- "$1" "$2"
+  }
+fi
+
+if ! declare -F docker_system_install_file >/dev/null 2>&1; then
+  docker_system_install_file() {
+    run_docker_sudo install -m 0644 "$1" "$2"
+  }
+fi
+
+if ! declare -F docker_system_move_file >/dev/null 2>&1; then
+  docker_system_move_file() {
+    run_docker_sudo mv -f -- "$1" "$2"
+  }
+fi
+
+if ! declare -F docker_system_remove_file >/dev/null 2>&1; then
+  docker_system_remove_file() {
+    run_docker_sudo rm -f -- "$1"
   }
 fi
 
@@ -110,6 +181,39 @@ _docker_find_command() {
 
 _docker_client_works() {
   docker_execute "$1" --version >/dev/null 2>&1
+}
+
+_docker_incomplete_marker_path() {
+  printf '%s\n' "${XDG_STATE_HOME:-$HOME/.local/state}/tabby-config/docker-install-incomplete"
+}
+
+_docker_mark_incomplete() {
+  local branch="$1" marker directory temporary
+
+  marker="$(_docker_incomplete_marker_path)"
+  directory="$(dirname "$marker")"
+  mkdir -p "$directory" || {
+    warn "failed to create Docker installer state directory: $directory"
+    return 1
+  }
+  temporary="$(mktemp "$directory/.docker-install-incomplete.XXXXXX")" || {
+    warn 'failed to create a temporary Docker installer state marker'
+    return 1
+  }
+  if ! printf '%s\n' "$branch" >"$temporary" || ! mv "$temporary" "$marker"; then
+    rm -f "$temporary"
+    warn "failed to record incomplete Docker $branch installation at $marker"
+    return 1
+  fi
+}
+
+_docker_clear_incomplete() {
+  local marker
+  marker="$(_docker_incomplete_marker_path)"
+  rm -f "$marker" || {
+    warn "Docker installation succeeded but its incomplete marker could not be cleared: $marker"
+    return 1
+  }
 }
 
 _docker_probe_existing() {
@@ -178,17 +282,97 @@ _docker_refuse_conflicting_packages() {
   fi
 }
 
-_docker_configure_apt_and_install() {
-  local codename="$1" architecture="$2" tmp_dir key source
+_docker_ascii_public_key_valid() {
+  local -a pipeline_status
+
+  awk '
+    state == 0 {
+      if ($0 == "-----BEGIN PGP PUBLIC KEY BLOCK-----") { state=1; next }
+      if ($0 != "") invalid=1
+      next
+    }
+    state == 1 {
+      if ($0 == "-----END PGP PUBLIC KEY BLOCK-----") {
+        if (!body) invalid=1
+        state=2
+        next
+      }
+      if (!body && ($0 == "" || $0 ~ /^[A-Za-z0-9-]+: /)) next
+      if (body && $0 ~ /^=[A-Za-z0-9+\/]{4}$/) next
+      if ($0 ~ /^[A-Za-z0-9+\/]+={0,2}$/ && length($0) % 4 == 0) {
+        print
+        body=1
+        next
+      }
+      invalid=1
+      next
+    }
+    state == 2 && $0 != "" { invalid=1 }
+    END { exit invalid || state != 2 || !body }
+  ' "$1" | base64 --decode >/dev/null 2>&1
+  pipeline_status=("${PIPESTATUS[@]}")
+  [ "${pipeline_status[0]}" -eq 0 ] && [ "${pipeline_status[1]}" -eq 0 ]
+}
+
+_docker_install_system_transaction() {
+  local codename="$1" architecture="$2" user="$3" docker="$4" discovered
+  local tmp_dir key source key_path source_path key_stage source_stage key_backup source_backup
+  local key_existed=false source_existed=false staging_started=false rollback_needed=false transaction_succeeded=false
+  local rollback_failed=false key_status source_status
 
   (
     tmp_dir="$(mktemp -d)" || {
       warn 'failed to create a temporary directory for Docker repository setup'
       exit 1
     }
-    trap 'rm -rf "$tmp_dir"' EXIT
     key="$tmp_dir/docker.asc"
     source="$tmp_dir/docker.sources"
+    key_backup="$tmp_dir/docker.asc.previous"
+    source_backup="$tmp_dir/docker.sources.previous"
+    key_path=/etc/apt/keyrings/docker.asc
+    source_path=/etc/apt/sources.list.d/docker.sources
+    key_stage="${key_path}.tabby-config.stage.$$"
+    source_stage="${source_path}.tabby-config.stage.$$"
+
+    _docker_system_transaction_cleanup() {
+      local status=$?
+      trap - EXIT
+      if [ "$transaction_succeeded" != true ] && [ "$rollback_needed" = true ]; then
+        if [ "$source_existed" = true ]; then
+          if ! docker_system_remove_file "$source_stage" ||
+            ! docker_system_restore_file "$source_backup" "$source_stage" ||
+            ! docker_system_move_file "$source_stage" "$source_path"; then
+            warn "failed to restore previous Docker apt source: $source_path"
+            rollback_failed=true
+          fi
+        elif ! docker_system_remove_file "$source_path"; then
+          warn "failed to remove installer-created Docker apt source: $source_path"
+          rollback_failed=true
+        fi
+        if [ "$key_existed" = true ]; then
+          if ! docker_system_remove_file "$key_stage" ||
+            ! docker_system_restore_file "$key_backup" "$key_stage" ||
+            ! docker_system_move_file "$key_stage" "$key_path"; then
+            warn "failed to restore previous Docker apt key: $key_path"
+            rollback_failed=true
+          fi
+        elif ! docker_system_remove_file "$key_path"; then
+          warn "failed to remove installer-created Docker apt key: $key_path"
+          rollback_failed=true
+        fi
+      fi
+      if [ "$staging_started" = true ]; then
+        docker_system_remove_file "$source_stage" >/dev/null 2>&1 || true
+        docker_system_remove_file "$key_stage" >/dev/null 2>&1 || true
+      fi
+      if [ "$rollback_failed" = true ]; then
+        warn "Docker repository rollback was incomplete; recovery snapshots retained at: $tmp_dir"
+      else
+        rm -rf "$tmp_dir"
+      fi
+      exit "$status"
+    }
+    trap _docker_system_transaction_cleanup EXIT
 
     if ! docker_fetch_url 'https://download.docker.com/linux/ubuntu/gpg' "$key"; then
       warn 'failed to download the official Docker apt signing key'
@@ -196,6 +380,10 @@ _docker_configure_apt_and_install() {
     fi
     if [ ! -s "$key" ]; then
       warn 'the downloaded Docker apt signing key is empty'
+      exit 1
+    fi
+    if ! _docker_ascii_public_key_valid "$key"; then
+      warn 'the downloaded Docker signing key is not an ASCII-armored PGP PUBLIC KEY BLOCK; refusing publication'
       exit 1
     fi
     if ! cat >"$source" <<EOF
@@ -215,14 +403,49 @@ EOF
       warn 'failed to create /etc/apt/keyrings for Docker'
       exit 1
     }
-    run_docker_sudo install -m 0644 "$key" /etc/apt/keyrings/docker.asc || {
-      warn 'failed to install the Docker apt signing key'
+    if ! key_status="$(docker_system_file_status "$key_path")"; then
+      warn "failed to probe existing Docker apt key path; refusing publication: $key_path"
       exit 1
-    }
-    run_docker_sudo install -m 0644 "$source" /etc/apt/sources.list.d/docker.sources || {
-      warn 'failed to install the Docker apt source'
+    fi
+    case "$key_status" in
+      regular|symlink)
+        key_existed=true
+        if ! docker_system_copy_file "$key_path" "$key_backup"; then
+          warn "failed to snapshot existing Docker apt key: $key_path"
+          exit 1
+        fi
+        ;;
+      absent) ;;
+      *) warn "unexpected Docker apt key path status '$key_status'; refusing publication: $key_path"; exit 1 ;;
+    esac
+    if ! source_status="$(docker_system_file_status "$source_path")"; then
+      warn "failed to probe existing Docker apt source path; refusing publication: $source_path"
       exit 1
-    }
+    fi
+    case "$source_status" in
+      regular|symlink)
+        source_existed=true
+        if ! docker_system_copy_file "$source_path" "$source_backup"; then
+          warn "failed to snapshot existing Docker apt source: $source_path"
+          exit 1
+        fi
+        ;;
+      absent) ;;
+      *) warn "unexpected Docker apt source path status '$source_status'; refusing publication: $source_path"; exit 1 ;;
+    esac
+
+    staging_started=true
+    rollback_needed=true
+    if ! docker_system_install_file "$key" "$key_stage" ||
+      ! docker_system_move_file "$key_stage" "$key_path"; then
+      warn 'failed to atomically publish the Docker apt signing key'
+      exit 1
+    fi
+    if ! docker_system_install_file "$source" "$source_stage" ||
+      ! docker_system_move_file "$source_stage" "$source_path"; then
+      warn 'failed to atomically publish the Docker apt source'
+      exit 1
+    fi
     run_docker_sudo apt-get update || {
       warn 'apt-get update failed for the Docker repository'
       exit 1
@@ -232,6 +455,36 @@ EOF
       warn 'apt-get install failed for the official Docker packages'
       exit 1
     }
+
+    if ! docker_systemctl system enable --now docker; then
+      warn 'failed to enable and start the system Docker service'
+      exit 1
+    fi
+    if ! run_docker_sudo usermod -aG docker "$user"; then
+      warn "failed to add $user to the docker group"
+      exit 1
+    fi
+    discovered="$(_docker_find_command 2>/dev/null || true)"
+    if [ "$discovered" != "$docker" ]; then
+      warn "PATH resolves docker to ${discovered:-nothing}, not the official package CLI $docker; adjust PATH or remove the shadowing command. Verification will use $docker"
+    fi
+    _docker_client_works "$docker" || {
+      warn "installed Docker client verification failed: $docker --version"
+      exit 1
+    }
+    docker_execute "$docker" buildx version >/dev/null 2>&1 || {
+      warn 'installed Docker Buildx verification failed'
+      exit 1
+    }
+    docker_execute "$docker" compose version >/dev/null 2>&1 || {
+      warn 'installed Docker Compose verification failed'
+      exit 1
+    }
+    run_docker_sudo "$docker" info >/dev/null 2>&1 || {
+      warn 'installed Docker daemon verification failed through sudo docker info'
+      exit 1
+    }
+    transaction_succeeded=true
   )
 }
 
@@ -241,44 +494,23 @@ _docker_install_system() {
   platform="$(_docker_validate_ubuntu)" || return 1
   IFS=$'\t' read -r codename architecture <<<"$platform"
   _docker_refuse_conflicting_packages || return 1
-  _docker_configure_apt_and_install "$codename" "$architecture" || return 1
-
-  if ! docker_systemctl system enable --now docker; then
-    warn 'failed to enable and start the system Docker service'
-    return 1
-  fi
   user="$(docker_current_user 2>/dev/null || true)"
   if [ -z "$user" ]; then
     warn 'cannot determine the current user for Docker group membership'
     return 1
   fi
-  if ! run_docker_sudo usermod -aG docker "$user"; then
-    warn "failed to add $user to the docker group"
+  docker="$(docker_system_cli_path 2>/dev/null || true)"
+  if [ -z "$docker" ]; then
+    warn 'cannot determine the official package-owned Docker CLI path'
     return 1
   fi
+  _docker_mark_incomplete system || return 1
+  _docker_install_system_transaction "$codename" "$architecture" "$user" "$docker" || return 1
   SERVER_DOCKER_NEEDS_RELOGIN=true
   export SERVER_DOCKER_NEEDS_RELOGIN
-
-  docker="$(_docker_find_command)" || {
-    warn 'Docker package installation did not provide a discoverable docker command'
-    return 1
-  }
-  _docker_client_works "$docker" || {
-    warn 'installed Docker client verification failed: docker --version'
-    return 1
-  }
-  docker_execute "$docker" buildx version >/dev/null 2>&1 || {
-    warn 'installed Docker Buildx verification failed'
-    return 1
-  }
-  docker_execute "$docker" compose version >/dev/null 2>&1 || {
-    warn 'installed Docker Compose verification failed'
-    return 1
-  }
-  run_docker_sudo "$docker" info >/dev/null 2>&1 || {
-    warn 'installed Docker daemon verification failed through sudo docker info'
-    return 1
-  }
+  SERVER_DOCKER_BIN="$docker"
+  export SERVER_DOCKER_BIN
+  _docker_clear_incomplete || return 1
   log 'Installed the official Docker Engine packages; log out and back in to activate docker group membership'
 }
 
@@ -377,9 +609,22 @@ _docker_verify_checksum_manifest() {
   fi
 }
 
+_docker_plugin_backup_path() {
+  local target="$1" stamp backup suffix=1
+
+  stamp="$(date +%Y%m%d%H%M%S)"
+  backup="${target}.bak.${stamp}"
+  while [ -e "$backup" ] || [ -L "$backup" ]; do
+    backup="${target}.bak.${stamp}.${suffix}"
+    suffix=$((suffix + 1))
+  done
+  printf '%s\n' "$backup"
+}
+
 _docker_install_user_plugin() {
   local docker="$1" plugin="$2" arch="$3" repo asset_pattern checksum_pattern
-  local tmp_dir url checksum_url binary manifest target
+  local tmp_dir url checksum_url binary manifest target plugin_dir staged backup=''
+  local rollback_needed=false publication_succeeded=false
 
   if docker_execute "$docker" "$plugin" version >/dev/null 2>&1; then
     log "Reusing working Docker $plugin plugin"
@@ -412,7 +657,20 @@ _docker_install_user_plugin() {
       warn "failed to create a temporary directory for Docker $plugin"
       exit 1
     }
-    trap 'rm -rf "$tmp_dir"' EXIT
+    _docker_plugin_publication_cleanup() {
+      local status=$?
+      trap - EXIT
+      rm -f "${staged:-}"
+      if [ "$publication_succeeded" != true ] && [ "$rollback_needed" = true ]; then
+        rm -f "$target"
+        if [ -n "$backup" ] && { [ -e "$backup" ] || [ -L "$backup" ]; }; then
+          docker_plugin_atomic_move "$backup" "$target" || warn "failed to restore original Docker $plugin plugin from $backup"
+        fi
+      fi
+      rm -rf "$tmp_dir"
+      exit "$status"
+    }
+    trap _docker_plugin_publication_cleanup EXIT
     binary="$tmp_dir/$(basename "$url")"
     manifest="$tmp_dir/checksums.txt"
     if ! docker_fetch_url "$url" "$binary"; then
@@ -432,22 +690,46 @@ _docker_install_user_plugin() {
       exit 1
     fi
     _docker_verify_checksum_manifest "$binary" "$manifest" || exit 1
-    chmod 0755 "$binary" || exit 1
-
     target="$HOME/.docker/cli-plugins/docker-$plugin"
-    mkdir -p "$(dirname "$target")" || exit 1
-    if [ -e "$target" ] || [ -L "$target" ]; then
-      backup_existing "$target" || exit 1
-    fi
-    install -m 0755 "$binary" "$target" || {
-      warn "failed to install Docker $plugin at $target"
+    plugin_dir="$(dirname "$target")"
+    mkdir -p "$plugin_dir" || exit 1
+    staged="$(mktemp "$plugin_dir/.docker-$plugin.stage.XXXXXX")" || {
+      warn "failed to create destination-adjacent staging for Docker $plugin"
       exit 1
     }
+    if ! docker_stage_plugin_file "$binary" "$staged"; then
+      warn "failed to stage Docker $plugin beside $target"
+      exit 1
+    fi
+    if ! docker_execute "$staged" version >/dev/null 2>&1; then
+      warn "staged Docker $plugin failed its own version check; refusing publication"
+      exit 1
+    fi
+
+    if [ -e "$target" ] || [ -L "$target" ]; then
+      backup="$(_docker_plugin_backup_path "$target")"
+      log "Backing up $target -> $backup"
+      if ! docker_plugin_atomic_move "$target" "$backup"; then
+        warn "failed to preserve existing Docker $plugin plugin"
+        exit 1
+      fi
+    fi
+    rollback_needed=true
+    if ! docker_plugin_atomic_move "$staged" "$target"; then
+      warn "failed to atomically publish Docker $plugin at $target"
+      exit 1
+    fi
+    staged=''
+    if ! docker_execute "$docker" "$plugin" version >/dev/null 2>&1; then
+      warn "published Docker $plugin failed Docker CLI verification; restoring the previous plugin"
+      exit 1
+    fi
+    publication_succeeded=true
   )
 }
 
 _docker_install_rootless() {
-  local docker arch uid
+  local docker='' rootless_docker arch uid
 
   _docker_require_rootless_prerequisites || return 1
   arch="$(linux_arch 2>/dev/null || true)"
@@ -458,13 +740,23 @@ _docker_install_rootless() {
       return 1
       ;;
   esac
-  _docker_download_rootless_installer || return 1
+  _docker_mark_incomplete rootless || return 1
   _docker_add_home_bin_to_path
-
-  docker="$(_docker_find_command)" || {
-    warn "rootless Docker installation did not provide $HOME/bin/docker or another discoverable docker command"
-    return 1
-  }
+  rootless_docker="$(docker_rootless_cli_path 2>/dev/null || true)"
+  if [ -n "$rootless_docker" ] && [ -x "$rootless_docker" ] && _docker_client_works "$rootless_docker"; then
+    docker="$rootless_docker"
+    log "Resuming with existing rootless Docker client: $docker"
+  else
+    _docker_download_rootless_installer || return 1
+    if [ -n "$rootless_docker" ] && [ -x "$rootless_docker" ] && _docker_client_works "$rootless_docker"; then
+      docker="$rootless_docker"
+    else
+      docker="$(_docker_find_command)" || {
+        warn "rootless Docker installation did not provide $HOME/bin/docker or another discoverable docker command"
+        return 1
+      }
+    fi
+  fi
   _docker_client_works "$docker" || {
     warn 'rootless Docker client verification failed: docker --version'
     return 1
@@ -493,25 +785,58 @@ _docker_install_rootless() {
     warn 'rootless Docker Compose verification failed'
     return 1
   }
+  SERVER_DOCKER_BIN="$docker"
+  export SERVER_DOCKER_BIN
+  _docker_clear_incomplete || return 1
   log 'Installed rootless Docker with Buildx and Compose'
 }
 
 install_docker() {
-  local docker=''
+  local docker='' marker marker_value branch=''
 
   : "${SERVER_DOCKER_REUSED_WITH_WARNINGS:=false}"
   : "${SERVER_DOCKER_NEEDS_RELOGIN:=false}"
   : "${SERVER_ROOTLESS_DOCKER:=false}"
 
-  docker="$(_docker_find_command 2>/dev/null || true)"
-  if [ -n "$docker" ] && _docker_client_works "$docker"; then
-    _docker_probe_existing "$docker"
-    return
+  marker="$(_docker_incomplete_marker_path)"
+  if [ -e "$marker" ] || [ -L "$marker" ]; then
+    if [ ! -r "$marker" ]; then
+      warn "Docker incomplete-install marker is not readable: $marker"
+      return 1
+    fi
+    if ! marker_value="$(cat "$marker")"; then
+      warn "failed to read Docker incomplete-install marker: $marker"
+      return 1
+    fi
+    if [ "$(wc -l <"$marker")" -ne 1 ]; then
+      warn "invalid Docker incomplete-install marker content in $marker; expected exactly one line containing system or rootless"
+      return 1
+    fi
+    case "$marker_value" in
+      system|rootless) branch="$marker_value" ;;
+      *)
+        warn "invalid Docker incomplete-install marker '$marker_value' in $marker; expected exactly system or rootless. Remove or correct the marker after reviewing the interrupted installation"
+        return 1
+        ;;
+    esac
+    log "Resuming incomplete Docker $branch installation"
+  else
+    docker="$(_docker_find_command 2>/dev/null || true)"
+    if [ -n "$docker" ] && _docker_client_works "$docker"; then
+      _docker_probe_existing "$docker"
+      return
+    fi
   fi
 
-  if server_has_sudo; then
-    _docker_install_system
-  else
-    _docker_install_rootless
+  if [ -z "$branch" ]; then
+    if server_has_sudo; then
+      branch=system
+    else
+      branch=rootless
+    fi
   fi
+  case "$branch" in
+    system) _docker_install_system ;;
+    rootless) _docker_install_rootless ;;
+  esac
 }
