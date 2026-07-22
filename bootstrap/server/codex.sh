@@ -28,6 +28,18 @@ if ! declare -F codex_npm >/dev/null 2>&1; then
   }
 fi
 
+if ! declare -F codex_node_discovery >/dev/null 2>&1; then
+  codex_node_discovery() {
+    command -v "$1"
+  }
+fi
+
+if ! declare -F codex_node >/dev/null 2>&1; then
+  codex_node() {
+    node "$@"
+  }
+fi
+
 if ! declare -F codex_clone_repo_at_ref >/dev/null 2>&1; then
   codex_clone_repo_at_ref() {
     clone_repo_at_ref "$@"
@@ -109,17 +121,33 @@ pretty_mermaid_target() {
   printf '%s\n' "${CODEX_HOME:-$HOME/.codex}/skills/pretty-mermaid"
 }
 
+pretty_mermaid_lock_file() {
+  printf '%s\n' "$REPO_ROOT/config/codex/pretty-mermaid-package-lock.json"
+}
+
+pretty_mermaid_file_matches_sha256() {
+  local path="$1" expected="$2" actual
+
+  [ -f "$path" ] && [ -r "$path" ] || return 1
+  actual="$(sha256_file "$path")" || return 1
+  [ "$actual" = "$expected" ]
+}
+
 pretty_mermaid_source_valid() {
   local target="$1"
   local skill_file="$target/SKILL.md"
-  local package_file="$target/package.json"
-  local script
+  local relative expected
 
-  [ -f "$skill_file" ] && [ -r "$skill_file" ] || return 1
-  [ -f "$package_file" ] && [ -r "$package_file" ] || return 1
-  for script in render.mjs batch.mjs themes.mjs; do
-    [ -f "$target/scripts/$script" ] && [ -r "$target/scripts/$script" ] || return 1
-  done
+  while IFS=$'\t' read -r relative expected; do
+    pretty_mermaid_file_matches_sha256 "$target/$relative" "$expected" || return 1
+  done <<EOF
+SKILL.md	$PRETTY_MERMAID_SKILL_SHA256
+package.json	$PRETTY_MERMAID_PACKAGE_SHA256
+scripts/render.mjs	$PRETTY_MERMAID_RENDER_SHA256
+scripts/batch.mjs	$PRETTY_MERMAID_BATCH_SHA256
+scripts/themes.mjs	$PRETTY_MERMAID_THEMES_SHA256
+EOF
+
   awk '
     NR == 1 { frontmatter = ($0 == "---"); next }
     frontmatter && $0 == "---" { closed = 1; exit }
@@ -130,9 +158,29 @@ pretty_mermaid_source_valid() {
 
 pretty_mermaid_dependencies_ready() {
   local target="$1"
+  local lock_file package_file script
 
-  [ -f "$target/node_modules/beautiful-mermaid/package.json" ] &&
-    [ -r "$target/node_modules/beautiful-mermaid/package.json" ]
+  lock_file="$(pretty_mermaid_lock_file)"
+  package_file="$target/node_modules/beautiful-mermaid/package.json"
+  [ -f "$lock_file" ] && [ -r "$lock_file" ] || return 1
+  [ -f "$target/package-lock.json" ] && cmp -s "$lock_file" "$target/package-lock.json" || return 1
+  [ -f "$package_file" ] && [ -r "$package_file" ] || return 1
+  codex_node_discovery node >/dev/null 2>&1 || return 1
+
+  codex_node --eval '
+    const fs = require("fs");
+    const lock = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    const installed = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+    const locked = lock.packages && lock.packages["node_modules/beautiful-mermaid"];
+    if (!locked || typeof locked.version !== "string" || installed.version !== locked.version) process.exit(1);
+  ' "$target/package-lock.json" "$package_file" || return 1
+  for script in render.mjs batch.mjs themes.mjs; do
+    codex_node --check "$target/scripts/$script" || return 1
+  done
+  codex_node --input-type=module --eval '
+    const { createRequire } = await import("node:module");
+    createRequire(process.argv[1])( "beautiful-mermaid" );
+  ' "$target/package.json"
 }
 
 pretty_mermaid_valid() {
@@ -148,53 +196,106 @@ pretty_mermaid_pinned() {
   [ "$current_ref" = "$PRETTY_MERMAID_REF" ]
 }
 
+pretty_mermaid_existing_reusable() {
+  local target="$1"
+
+  [ -d "$target" ] && [ ! -L "$target" ] || return 1
+  pretty_mermaid_source_valid "$target" || return 1
+  if [ -d "$target/.git" ]; then
+    pretty_mermaid_pinned "$target" || return 1
+  fi
+}
+
+pretty_mermaid_new_stage() {
+  local parent="$1" stage
+
+  mkdir -p "$parent" || return 1
+  stage="$(mktemp -d "$parent/.pretty-mermaid.stage.XXXXXX")" || return 1
+  rmdir "$stage" || return 1
+  printf '%s\n' "$stage"
+}
+
+pretty_mermaid_backup_target() {
+  local target="$1" stamp backup suffix=1
+
+  stamp="$(date +%Y%m%d%H%M%S)"
+  backup="${target}.bak.${stamp}"
+  while [ -e "$backup" ] || [ -L "$backup" ]; do
+    backup="${target}.bak.${stamp}.${suffix}"
+    suffix=$((suffix + 1))
+  done
+  log "Backing up $target -> $backup" >&2
+  mv "$target" "$backup" || return 1
+  printf '%s\n' "$backup"
+}
+
+pretty_mermaid_discard_stage() {
+  local stage="$1"
+
+  [ -n "$stage" ] && [ -e "$stage" ] && rm -rf -- "$stage"
+}
+
 install_pretty_mermaid() {
-  local target cloned=false
+  local target stage lock_file backup='' had_existing=false
 
   target="$(pretty_mermaid_target)"
-  if pretty_mermaid_source_valid "$target"; then
-    if ! force_install || [ ! -d "$target/.git" ]; then
+  if pretty_mermaid_existing_reusable "$target" && ! force_install; then
+    if pretty_mermaid_dependencies_ready "$target"; then
       log "Reusing valid pretty-mermaid skill: $target"
-    else
-      cloned=true
+      return 0
     fi
-  elif [ -e "$target" ] || [ -L "$target" ]; then
-    backup_existing "$target" || return 1
-    cloned=true
-  else
-    cloned=true
-  fi
-
-  if [ "$cloned" = true ]; then
-    if ! codex_clone_repo_at_ref "$PRETTY_MERMAID_REPO" "$PRETTY_MERMAID_REF" "$target"; then
-      warn "failed to install pretty-mermaid skill from pinned repository"
-      return 1
-    fi
-    if ! pretty_mermaid_source_valid "$target"; then
-      warn "pretty-mermaid checkout is missing required skill source files: $target"
-      return 1
-    fi
-    if ! pretty_mermaid_pinned "$target"; then
-      warn "pretty-mermaid checkout is not pinned at $PRETTY_MERMAID_REF"
-      return 1
+    if ! codex_npm_discovery npm >/dev/null 2>&1 || ! codex_node_discovery node >/dev/null 2>&1; then
+      warn "pretty-mermaid source installed, but Node.js/npm is required to render diagrams"
+      return 0
     fi
   fi
 
-  if pretty_mermaid_dependencies_ready "$target"; then
-    return 0
+  stage="$(pretty_mermaid_new_stage "$(dirname "$target")")" || {
+    warn "cannot create pretty-mermaid staging directory"
+    return 1
+  }
+  if ! codex_clone_repo_at_ref "$PRETTY_MERMAID_REPO" "$PRETTY_MERMAID_REF" "$stage"; then
+    pretty_mermaid_discard_stage "$stage"
+    warn "failed to stage pretty-mermaid skill from pinned repository"
+    return 1
+  fi
+  if ! pretty_mermaid_source_valid "$stage" || ! pretty_mermaid_pinned "$stage"; then
+    pretty_mermaid_discard_stage "$stage"
+    warn "staged pretty-mermaid checkout failed pinned source validation"
+    return 1
   fi
 
-  if codex_npm_discovery npm >/dev/null 2>&1; then
-    if ! codex_npm --prefix "$target" install --omit=dev --ignore-scripts; then
-      warn "failed to install pretty-mermaid runtime dependencies"
-      return 1
-    fi
-    if ! pretty_mermaid_dependencies_ready "$target"; then
-      warn "pretty-mermaid dependency installation did not provide beautiful-mermaid"
+  lock_file="$(pretty_mermaid_lock_file)"
+  if ! cp "$lock_file" "$stage/package-lock.json"; then
+    pretty_mermaid_discard_stage "$stage"
+    warn "cannot copy pinned pretty-mermaid dependency lockfile"
+    return 1
+  fi
+  if codex_npm_discovery npm >/dev/null 2>&1 && codex_node_discovery node >/dev/null 2>&1; then
+    if ! codex_npm --prefix "$stage" ci --omit=dev --ignore-scripts ||
+      ! pretty_mermaid_dependencies_ready "$stage"; then
+      pretty_mermaid_discard_stage "$stage"
+      warn "failed to install or validate pinned pretty-mermaid runtime dependencies"
       return 1
     fi
   else
     warn "pretty-mermaid source installed, but Node.js/npm is required to render diagrams"
+  fi
+
+  if [ -e "$target" ] || [ -L "$target" ]; then
+    had_existing=true
+    backup="$(pretty_mermaid_backup_target "$target")" || {
+      pretty_mermaid_discard_stage "$stage"
+      return 1
+    }
+  fi
+  if ! mv "$stage" "$target"; then
+    pretty_mermaid_discard_stage "$stage"
+    if [ "$had_existing" = true ]; then
+      mv "$backup" "$target" || warn "cannot restore previous pretty-mermaid skill: $backup"
+    fi
+    warn "cannot publish staged pretty-mermaid skill"
+    return 1
   fi
 }
 

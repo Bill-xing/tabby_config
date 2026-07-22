@@ -48,6 +48,11 @@ codex_npm_discovery() {
   printf '%s\n' "$NPM_PATH"
 }
 
+codex_node_discovery() {
+  [ "$1" = node ] && [ -n "$NODE_PATH" ] || return 1
+  printf '%s\n' "$NODE_PATH"
+}
+
 codex_cli() {
   printf '%s\0' "$@" >>"$CODEX_LOG"
   case "${1:-}" in
@@ -82,6 +87,7 @@ codex_clone_repo_at_ref() {
   [ "$CLONE_STATUS" -eq 0 ] || return "$CLONE_STATUS"
   if [ "$CLONE_CREATE_GIT" = true ]; then
     mkdir -p "$target/.git"
+    printf '%s\n' "${CLONED_GIT_HEAD:-$ref}" >"$target/.git/mock-head"
   else
     mkdir -p "$target"
   fi
@@ -90,12 +96,12 @@ codex_clone_repo_at_ref() {
   else
     printf '%s\n' 'not a skill' >"$target/SKILL.md"
   fi
-  GIT_HEAD="${CLONED_GIT_HEAD:-$ref}"
 }
 
 codex_git() {
   [ "$1" = -C ] && [ "$3" = rev-parse ] && [ "$4" = HEAD ] || return 64
-  printf '%s\n' "$GIT_HEAD"
+  [ -r "$2/.git/mock-head" ] || return 1
+  sed -n '1p' "$2/.git/mock-head"
 }
 
 codex_npm() {
@@ -103,9 +109,20 @@ codex_npm() {
   printf 'npm\n' >>"$EVENT_LOG"
   if [ "$NPM_STATUS" -eq 0 ] && [ "$NPM_CREATES_DEPENDENCY" = true ]; then
     mkdir -p "$2/node_modules/beautiful-mermaid"
-    printf '%s\n' '{}' >"$2/node_modules/beautiful-mermaid/package.json"
+    printf '%s\n' '{"name":"beautiful-mermaid","version":"0.1.3"}' >"$2/node_modules/beautiful-mermaid/package.json"
   fi
   return "$NPM_STATUS"
+}
+
+codex_node() {
+  printf '%s\0' "$@" >>"$NODE_LOG"
+  case "$NODE_FAIL_MODE:${1:-}" in
+    check:--check|import:--input-type=module) return 9 ;;
+  esac
+  if [ "$NODE_VALIDATE_JSON" = true ] && [ "${1:-}" = --eval ]; then
+    grep -F '"version":"0.1.3"' "$4" >/dev/null || return 9
+  fi
+  return "$NODE_STATUS"
 }
 
 install_codex_server_config() {
@@ -116,16 +133,27 @@ install_codex_server_config() {
 make_complete_skill() {
   local target="$1" with_dependency="$2"
   mkdir -p "$target/scripts"
-  printf '%s\n' '---' 'name: pretty-mermaid' '---' >"$target/SKILL.md"
-  printf '%s\n' '{}' >"$target/package.json"
-  printf '%s\n' '// render' >"$target/scripts/render.mjs"
-  printf '%s\n' '// batch' >"$target/scripts/batch.mjs"
-  printf '%s\n' '// themes' >"$target/scripts/themes.mjs"
+  printf '%s\n' '---' 'name: pretty-mermaid' '---' 'Render pinned Mermaid diagrams.' >"$target/SKILL.md"
+  printf '%s\n' '{"name":"pretty-mermaid-skill","version":"1.0.0","type":"module"}' >"$target/package.json"
+  printf '%s\n' 'import "beautiful-mermaid";' 'console.log("render");' >"$target/scripts/render.mjs"
+  printf '%s\n' 'import "beautiful-mermaid";' 'console.log("batch");' >"$target/scripts/batch.mjs"
+  printf '%s\n' 'import "beautiful-mermaid";' 'console.log("themes");' >"$target/scripts/themes.mjs"
+  cp "$REPO_ROOT/config/codex/pretty-mermaid-package-lock.json" "$target/package-lock.json"
   if [ "$with_dependency" = yes ]; then
     mkdir -p "$target/node_modules/beautiful-mermaid"
-    printf '%s\n' '{}' >"$target/node_modules/beautiful-mermaid/package.json"
+    printf '%s\n' '{"name":"beautiful-mermaid","version":"0.1.3"}' >"$target/node_modules/beautiful-mermaid/package.json"
   fi
 }
+
+fixture_sha() {
+  printf '%s' "$1" | sha256sum | awk '{print $1}'
+}
+
+PRETTY_MERMAID_SKILL_SHA256="$(fixture_sha $'---\nname: pretty-mermaid\n---\nRender pinned Mermaid diagrams.\n')"
+PRETTY_MERMAID_PACKAGE_SHA256="$(fixture_sha $'{"name":"pretty-mermaid-skill","version":"1.0.0","type":"module"}\n')"
+PRETTY_MERMAID_RENDER_SHA256="$(fixture_sha $'import "beautiful-mermaid";\nconsole.log("render");\n')"
+PRETTY_MERMAID_BATCH_SHA256="$(fixture_sha $'import "beautiful-mermaid";\nconsole.log("batch");\n')"
+PRETTY_MERMAID_THEMES_SHA256="$(fixture_sha $'import "beautiful-mermaid";\nconsole.log("themes");\n')"
 
 reset_case() {
   local name="$1"
@@ -135,13 +163,15 @@ reset_case() {
   CODEX_LOG="$tmp_root/$name/codex-args.bin"
   CLONE_LOG="$tmp_root/$name/clone-args.bin"
   NPM_LOG="$tmp_root/$name/npm-args.bin"
+  NODE_LOG="$tmp_root/$name/node-args.bin"
   PLUGIN_ADD_CALL_LOG="$tmp_root/$name/plugin-add-calls.log"
   EVENT_LOG="$tmp_root/$name/events.log"
-  export HOME CODEX_HOME MOCK_BIN CODEX_LOG CLONE_LOG NPM_LOG EVENT_LOG PLUGIN_ADD_CALL_LOG
+  export HOME CODEX_HOME MOCK_BIN CODEX_LOG CLONE_LOG NPM_LOG NODE_LOG EVENT_LOG PLUGIN_ADD_CALL_LOG
   mkdir -p "$HOME" "$MOCK_BIN"
   : >"$CODEX_LOG"
   : >"$CLONE_LOG"
   : >"$NPM_LOG"
+  : >"$NODE_LOG"
   : >"$PLUGIN_ADD_CALL_LOG"
   : >"$EVENT_LOG"
   CODEX_DISCOVERY=present
@@ -154,11 +184,14 @@ reset_case() {
   CLONE_STATUS=0
   CLONE_CREATE_GIT=true
   CLONE_CREATE_VALID_SOURCE=true
-  GIT_HEAD=''
   CLONED_GIT_HEAD=''
   NPM_PATH=''
   NPM_STATUS=0
   NPM_CREATES_DEPENDENCY=true
+  NODE_PATH="$MOCK_BIN/node"
+  NODE_STATUS=0
+  NODE_FAIL_MODE=''
+  NODE_VALIDATE_JSON=true
   CONFIG_STATUS=0
   unset DOTFILES_FORCE_INSTALL
 }
@@ -246,11 +279,17 @@ find "$CODEX_HOME/skills" -maxdepth 1 -name 'pretty-mermaid.bak.*' -print -quit 
 read_nul_log "$CLONE_LOG"
 assert_eq "$PRETTY_MERMAID_REPO" "${NUL_ARGS[0]:-}" 'clone receives pinned repository'
 assert_eq "$PRETTY_MERMAID_REF" "${NUL_ARGS[1]:-}" 'clone receives pinned ref'
-assert_eq "$CODEX_HOME/skills/pretty-mermaid" "${NUL_ARGS[2]:-}" 'clone receives exact target'
+case "${NUL_ARGS[2]:-}" in
+  "$CODEX_HOME/skills/.pretty-mermaid.stage."*) ;;
+  *) fail 'clone receives private sibling staging target' ;;
+esac
 read_nul_log "$NPM_LOG"
 assert_eq --prefix "${NUL_ARGS[0]:-}" 'npm uses prefix option'
-assert_eq "$CODEX_HOME/skills/pretty-mermaid" "${NUL_ARGS[1]:-}" 'npm receives exact target'
-assert_eq install "${NUL_ARGS[2]:-}" 'npm installs dependencies'
+case "${NUL_ARGS[1]:-}" in
+  "$CODEX_HOME/skills/.pretty-mermaid.stage."*) ;;
+  *) fail 'npm receives private sibling staging target' ;;
+esac
+assert_eq ci "${NUL_ARGS[2]:-}" 'npm installs from lockfile'
 assert_eq --omit=dev "${NUL_ARGS[3]:-}" 'npm omits dev dependencies'
 assert_eq --ignore-scripts "${NUL_ARGS[4]:-}" 'npm never runs lifecycle scripts'
 
@@ -259,6 +298,68 @@ CLONE_CREATE_GIT=false
 if install_pretty_mermaid >/dev/null 2>&1; then
   fail 'new clone without a git checkout must fail pinned verification'
 fi
+[ ! -e "$CODEX_HOME/skills/pretty-mermaid" ] ||
+  fail 'failed staged clone must not publish leftovers'
+CLONE_CREATE_GIT=true
+install_pretty_mermaid
+
+reset_case atomic-preserve-target
+make_complete_skill "$CODEX_HOME/skills/pretty-mermaid" yes
+mkdir -p "$CODEX_HOME/skills/pretty-mermaid/.git"
+printf '%s\n' wrong >"$CODEX_HOME/skills/pretty-mermaid/.git/mock-head"
+printf '%s\n' old >"$CODEX_HOME/skills/pretty-mermaid/prior-marker"
+NPM_PATH="$MOCK_BIN/npm"
+NPM_STATUS=5
+if install_pretty_mermaid >/dev/null 2>&1; then
+  fail 'failed staged refresh must fail'
+fi
+assert_eq old "$(<"$CODEX_HOME/skills/pretty-mermaid/prior-marker")" \
+  'failed staged refresh preserves prior target'
+NPM_STATUS=0
+install_pretty_mermaid
+[ ! -e "$CODEX_HOME/skills/pretty-mermaid/prior-marker" ] ||
+  fail 'successful staged refresh atomically replaces prior target'
+
+reset_case tampered-source
+make_complete_skill "$CODEX_HOME/skills/pretty-mermaid" yes
+printf '%s\n' '# tampered' >>"$CODEX_HOME/skills/pretty-mermaid/scripts/render.mjs"
+install_pretty_mermaid
+find "$CODEX_HOME/skills" -maxdepth 1 -name 'pretty-mermaid.bak.*' -print -quit | grep -q . ||
+  fail 'tampered pinned source is backed up and replaced from staging'
+
+reset_case corrupt-dependency-retry
+make_complete_skill "$CODEX_HOME/skills/pretty-mermaid" yes
+printf '%s\n' '{not json' >"$CODEX_HOME/skills/pretty-mermaid/node_modules/beautiful-mermaid/package.json"
+NPM_PATH="$MOCK_BIN/npm"
+install_pretty_mermaid
+read_nul_log "$NPM_LOG"
+assert_eq ci "${NUL_ARGS[2]:-}" 'corrupt dependency metadata triggers locked ci retry'
+
+reset_case node-smoke-failure
+make_complete_skill "$CODEX_HOME/skills/pretty-mermaid" yes
+mkdir -p "$CODEX_HOME/skills/pretty-mermaid/.git"
+printf '%s\n' "$PRETTY_MERMAID_REF" >"$CODEX_HOME/skills/pretty-mermaid/.git/mock-head"
+printf '%s\n' old >"$CODEX_HOME/skills/pretty-mermaid/prior-marker"
+NPM_PATH="$MOCK_BIN/npm"
+NODE_FAIL_MODE=import
+if install_pretty_mermaid >/dev/null 2>&1; then
+  fail 'node dependency import smoke failure must prevent publish'
+fi
+assert_eq old "$(<"$CODEX_HOME/skills/pretty-mermaid/prior-marker")" \
+  'node smoke failure preserves existing target atomically'
+
+reset_case node-syntax-failure
+make_complete_skill "$CODEX_HOME/skills/pretty-mermaid" yes
+mkdir -p "$CODEX_HOME/skills/pretty-mermaid/.git"
+printf '%s\n' "$PRETTY_MERMAID_REF" >"$CODEX_HOME/skills/pretty-mermaid/.git/mock-head"
+printf '%s\n' old >"$CODEX_HOME/skills/pretty-mermaid/prior-marker"
+NPM_PATH="$MOCK_BIN/npm"
+NODE_FAIL_MODE=check
+if install_pretty_mermaid >/dev/null 2>&1; then
+  fail 'node script syntax check failure must prevent publish'
+fi
+assert_eq old "$(<"$CODEX_HOME/skills/pretty-mermaid/prior-marker")" \
+  'node syntax failure preserves existing target atomically'
 
 reset_case bad-pinned-checkout
 CLONED_GIT_HEAD=wrong
@@ -286,7 +387,7 @@ NPM_STATUS=0
 install_pretty_mermaid
 pretty_mermaid_dependencies_ready "$CODEX_HOME/skills/pretty-mermaid" ||
   fail 'rerun installs the missing rendering dependency'
-assert_eq 0 "$(wc -c <"$CLONE_LOG")" 'dependency retry does not reclone a valid source'
+[ -s "$CLONE_LOG" ] || fail 'dependency retry stages a fresh pinned source before publishing'
 
 reset_case dependency-after-npm-available
 make_complete_skill "$CODEX_HOME/skills/pretty-mermaid" no
