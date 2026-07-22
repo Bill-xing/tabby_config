@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 .worktrees/
 docs/superpowers/*
+服务器开荒快速指南.md
