@@ -388,8 +388,8 @@ install_tabby_config() {
 }
 
 install_codex_notifications() {
-  local source_file="$REPO_ROOT/config/codex/tabby-notifications.toml"
-  local merger="$REPO_ROOT/bootstrap/merge_codex_tui_config.py"
+  local source_file="$REPO_ROOT/config/codex/server.toml"
+  local merger="$REPO_ROOT/bootstrap/merge_codex_config.py"
   local codex_home target temp_file
 
   if ! have codex; then
@@ -401,8 +401,8 @@ install_codex_notifications() {
     return 0
   fi
 
-  [ -f "$source_file" ] || die "missing Codex notification config: $source_file"
-  [ -f "$merger" ] || die "missing Codex TUI config merger: $merger"
+  [ -f "$source_file" ] || die "missing Codex server config: $source_file"
+  [ -f "$merger" ] || die "missing Codex config merger: $merger"
 
   codex_home="${CODEX_HOME:-$HOME/.codex}"
   target="$codex_home/config.toml"
@@ -412,7 +412,7 @@ install_codex_notifications() {
   if [ -e "$target" ] || [ -L "$target" ]; then
     if ! python3 "$merger" "$source_file" "$target" >"$temp_file"; then
       rm -f "$temp_file"
-      die "failed to merge Codex notification config into $target"
+      die "failed to merge Codex server config into $target"
     fi
     if cmp -s "$temp_file" "$target"; then
       rm -f "$temp_file"
@@ -421,11 +421,11 @@ install_codex_notifications() {
     backup_existing "$target"
   elif ! python3 "$merger" "$source_file" >"$temp_file"; then
     rm -f "$temp_file"
-    die "failed to create Codex notification config"
+    die "failed to create Codex server config"
   fi
 
   mv "$temp_file" "$target"
-  log "Installed Codex OSC 9 notifications in $target"
+  log "Installed Codex server config in $target"
 }
 
 install_tabby_osc_notify() {

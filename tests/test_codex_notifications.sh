@@ -3,8 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-FRAGMENT="$REPO_ROOT/config/codex/tabby-notifications.toml"
-MERGER="$REPO_ROOT/bootstrap/merge_codex_tui_config.py"
+FRAGMENT="$REPO_ROOT/config/codex/server.toml"
+MERGER="$REPO_ROOT/bootstrap/merge_codex_config.py"
 TMUX_CONFIG="$REPO_ROOT/config/tmux/.tmux.conf"
 TABBY_CONFIG="$REPO_ROOT/config/tabby/config.yaml"
 README="$REPO_ROOT/README.md"
@@ -39,19 +39,22 @@ assert_file_not_contains() {
   fi
 }
 
-[ -f "$FRAGMENT" ] || fail "missing Codex notification fragment"
+[ -f "$FRAGMENT" ] || fail "missing Codex server fragment"
 assert_eq "1" "$(grep -c '^\[tui\]$' "$FRAGMENT")" "fragment [tui] table count"
 assert_file_contains \
   "$FRAGMENT" \
   'notifications = ["agent-turn-complete", "approval-requested"]'
 assert_file_contains "$FRAGMENT" 'notification_method = "osc9"'
 assert_file_contains "$FRAGMENT" 'notification_condition = "always"'
+assert_file_contains "$FRAGMENT" 'model = "gpt-5.6-sol"'
+assert_file_contains "$FRAGMENT" 'status_line_use_colors = true'
+assert_file_contains "$FRAGMENT" '[plugins."superpowers@openai-curated"]'
 assert_eq \
-  "4" \
+  "23" \
   "$(awk 'NF && $1 !~ /^#/ { count++ } END { print count + 0 }' "$FRAGMENT")" \
   "fragment meaningful line count"
 
-[ -f "$MERGER" ] || fail "missing Codex TUI merge tool"
+[ -f "$MERGER" ] || fail "missing Codex config merge tool"
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
@@ -65,30 +68,38 @@ model = "gpt-test"
 approval_policy = "on-request"
 
 [tui]
-status_line = ["model", "current-dir"]
 notifications = false
 notification_method = "bel"
 notification_condition = "unfocused"
-
-[tui.model_availability_nux]
-"gpt-test" = 4
-
-[sandbox_workspace_write]
-network_access = true
 EOF
 
 cat >"$tmp_dir/expected.toml" <<'EOF'
-model = "gpt-test"
+model = "gpt-5.6-sol"
 approval_policy = "on-request"
+model_reasoning_effort = "high"
+service_tier = "fast"
+approvals_reviewer = "auto_review"
+web_search = "live"
+sandbox_mode = "workspace-write"
 
 [tui]
-status_line = ["model", "current-dir"]
 notifications = ["agent-turn-complete", "approval-requested"]
 notification_method = "osc9"
 notification_condition = "always"
+status_line = ["model-with-reasoning", "current-dir", "context-remaining", "fast-mode"]
+status_line_use_colors = true
 
 [tui.model_availability_nux]
-"gpt-test" = 4
+"gpt-5.6-sol" = 4
+
+[features]
+remote_plugin = false
+
+[plugins."figma@openai-curated"]
+enabled = true
+
+[plugins."superpowers@openai-curated"]
+enabled = true
 
 [sandbox_workspace_write]
 network_access = true
@@ -96,34 +107,33 @@ EOF
 
 python3 "$MERGER" "$FRAGMENT" "$tmp_dir/existing.toml" >"$tmp_dir/merged.toml"
 cmp -s "$tmp_dir/expected.toml" "$tmp_dir/merged.toml" ||
-  fail "merge must replace only managed [tui] notification keys"
+  fail "merge must install all managed Codex server keys"
 
-python3 "$MERGER" "$FRAGMENT" "$tmp_dir/expected.toml" >"$tmp_dir/idempotent.toml"
-cmp -s "$tmp_dir/expected.toml" "$tmp_dir/idempotent.toml" ||
+python3 "$MERGER" "$FRAGMENT" "$tmp_dir/merged.toml" >"$tmp_dir/idempotent.toml"
+cmp -s "$tmp_dir/merged.toml" "$tmp_dir/idempotent.toml" ||
   fail "an already merged config must remain byte-identical"
 
-cat >"$tmp_dir/no-tui.toml" <<'EOF'
-model = "gpt-test"
+awk '
+  /^\[tui\]$/ { skip = 1; next }
+  /^\[tui\.model_availability_nux\]$/ { skip = 0 }
+  !skip { print }
+' "$FRAGMENT" >"$tmp_dir/no-tui.toml"
+cat >>"$tmp_dir/no-tui.toml" <<'EOF'
 
 [history]
 persistence = "save-all"
 EOF
 
-cat >"$tmp_dir/no-tui-expected.toml" <<'EOF'
-model = "gpt-test"
+cp "$FRAGMENT" "$tmp_dir/no-tui-expected.toml"
+cat >>"$tmp_dir/no-tui-expected.toml" <<'EOF'
 
 [history]
 persistence = "save-all"
-
-[tui]
-notifications = ["agent-turn-complete", "approval-requested"]
-notification_method = "osc9"
-notification_condition = "always"
 EOF
 
 python3 "$MERGER" "$FRAGMENT" "$tmp_dir/no-tui.toml" >"$tmp_dir/no-tui-merged.toml"
 cmp -s "$tmp_dir/no-tui-expected.toml" "$tmp_dir/no-tui-merged.toml" ||
-  fail "merge must append [tui] when it is absent"
+  fail "merge must insert all missing managed sections"
 
 cat >"$tmp_dir/dotted.toml" <<'EOF'
 tui.notifications = true
@@ -163,7 +173,7 @@ fi
 [ ! -s "$tmp_dir/rejected.toml" ] ||
   fail "a rejected multiline value merge must not emit partial config"
 
-printf 'Codex notification fragment and merge checks passed\n'
+printf 'Codex server fragment and merge checks passed\n'
 
 # shellcheck source=bootstrap/common.sh
 source "$REPO_ROOT/bootstrap/common.sh"
@@ -206,7 +216,7 @@ backup="${target}.bak.20260716120000"
 [ -f "$backup" ] || fail "changed Codex config must be backed up"
 cmp -s "$tmp_dir/original-config.toml" "$backup" ||
   fail "Codex config backup must preserve the original bytes"
-assert_file_contains "$target" 'model = "gpt-test"'
+assert_file_contains "$target" 'model = "gpt-5.6-sol"'
 assert_file_contains "$target" 'approval_policy = "on-request"'
 assert_file_contains \
   "$target" \
