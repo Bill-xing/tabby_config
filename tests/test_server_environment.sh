@@ -31,6 +31,14 @@ assert_not_contains() {
   fi
 }
 
+assert_files_equal() {
+  local expected="$1"
+  local actual="$2"
+  local message="$3"
+
+  cmp -s "$expected" "$actual" || fail "$message"
+}
+
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
@@ -49,11 +57,24 @@ printf '%s\n' \
   '# >>> tabby_config server-environment >>>' \
   'partially written managed content' \
   '# unrelated setting after the partial block' >"$broken_bashrc"
-original_broken_bashrc="$(cat "$broken_bashrc")"
+original_broken_bashrc="$tmp_dir/original-broken-bashrc"
+cp "$broken_bashrc" "$original_broken_bashrc"
 if upsert_managed_block "$broken_bashrc" server-environment 'replacement content'; then
   fail 'unterminated managed blocks must be rejected without rewriting bashrc'
 fi
-assert_eq "$original_broken_bashrc" "$(cat "$broken_bashrc")" 'unterminated managed block preserves unrelated bashrc content'
+assert_files_equal "$original_broken_bashrc" "$broken_bashrc" 'unterminated managed block preserves bashrc bytes'
+
+orphan_end_bashrc="$tmp_dir/orphan-end-bashrc"
+printf '%s\n' \
+  '# unrelated setting' \
+  '# <<< tabby_config server-environment <<<' \
+  '# unrelated setting after the orphan end marker' >"$orphan_end_bashrc"
+original_orphan_end_bashrc="$tmp_dir/original-orphan-end-bashrc"
+cp "$orphan_end_bashrc" "$original_orphan_end_bashrc"
+if upsert_managed_block "$orphan_end_bashrc" server-environment 'replacement content'; then
+  fail 'orphan managed end markers must be rejected without rewriting bashrc'
+fi
+assert_files_equal "$original_orphan_end_bashrc" "$orphan_end_bashrc" 'orphan managed end marker preserves bashrc bytes'
 
 symlink_target="$tmp_dir/symlink-target-bashrc"
 symlink_bashrc="$tmp_dir/symlink-bashrc"
@@ -66,6 +87,27 @@ assert_contains "$symlink_target" 'symlink replacement content'
 git_global_proxy() {
   printf '%s\n' "${MOCK_GIT_PROXY:-}"
 }
+
+sudo_call_count=0
+sudo_available() {
+  sudo_call_count=$((sudo_call_count + 1))
+  return 0
+}
+
+SERVER_HAS_SUDO=true
+server_has_sudo || fail 'literal SERVER_HAS_SUDO=true enables sudo'
+assert_eq 0 "$sudo_call_count" 'literal true does not call sudo_available'
+SERVER_HAS_SUDO=false
+if server_has_sudo; then
+  fail 'literal SERVER_HAS_SUDO=false disables sudo'
+fi
+assert_eq 0 "$sudo_call_count" 'literal false does not call sudo_available'
+SERVER_HAS_SUDO=invalid
+server_has_sudo || fail 'invalid SERVER_HAS_SUDO falls back to sudo_available'
+assert_eq 1 "$sudo_call_count" 'invalid SERVER_HAS_SUDO calls sudo_available'
+unset SERVER_HAS_SUDO
+server_has_sudo || fail 'unset SERVER_HAS_SUDO falls back to sudo_available'
+assert_eq 2 "$sudo_call_count" 'unset SERVER_HAS_SUDO calls sudo_available'
 
 clear_proxy_environment() {
   unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
@@ -97,13 +139,16 @@ assert_eq 'http://127.0.0.1:7890' "$(detect_proxy_candidate)" 'default proxy fal
 assert_eq $'proxy.example\t8080' \
   "$(python3 "$REPO_ROOT/bootstrap/proxy_endpoint.py" 'http://user:secret@proxy.example:8080')" \
   'proxy endpoint removes credentials'
+assert_eq $'proxy.example\t8080' \
+  "$(python3 "$REPO_ROOT/bootstrap/proxy_endpoint.py" '  proxy.example:8080  ')" \
+  'proxy endpoint trims surrounding whitespace'
 if python3 "$REPO_ROOT/bootstrap/proxy_endpoint.py" 'http://proxy.example:99999' >/dev/null 2>&1; then
   fail 'proxy endpoint rejects out-of-range ports'
 fi
 
 aliases="$(render_proxy_aliases '2001:db8::1' 1080)"
 case "$aliases" in
-  *'http://[2001:db8::1]:1080'*'socks5://[2001:db8::1]:1080'*'nc -X 5 -x 2001:db8::1:1080'*) ;;
+  *'http://[2001:db8::1]:1080'*'socks5://[2001:db8::1]:1080'*'nc -X 5 -x [2001:db8::1]:1080'*) ;;
   *) fail 'proxy aliases use normalized IPv6 endpoint values' ;;
 esac
 case "$aliases" in

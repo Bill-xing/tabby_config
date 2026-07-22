@@ -8,11 +8,11 @@ sudo_available() {
 }
 
 server_has_sudo() {
-  if [ "${SERVER_HAS_SUDO+x}" = x ]; then
-    [ "$SERVER_HAS_SUDO" = true ]
-  else
-    sudo_available
-  fi
+  case "${SERVER_HAS_SUDO:-}" in
+    true) return 0 ;;
+    false) return 1 ;;
+    *) sudo_available ;;
+  esac
 }
 
 git_global_proxy() {
@@ -65,11 +65,15 @@ render_proxy_aliases() {
   local host="$1"
   local port="$2"
   local url_host="$host"
+  local nc_host="$host"
 
   [[ "$host" =~ ^[A-Za-z0-9._:-]+$ ]] || return 1
   _tabby_valid_port "$port" || return 1
   case "$host" in
-    *:*) url_host="[$host]" ;;
+    *:*)
+      url_host="[$host]"
+      nc_host="[$host]"
+      ;;
   esac
 
   cat <<EOF
@@ -83,7 +87,7 @@ _tabby_proxy_on() {
   export ALL_PROXY="socks5://${url_host}:${port}"
   export no_proxy="localhost,127.0.0.1,::1"
   export NO_PROXY="localhost,127.0.0.1,::1"
-  export GIT_SSH_COMMAND="ssh -o ProxyCommand='nc -X 5 -x ${host}:${port} %h %p'"
+  export GIT_SSH_COMMAND="ssh -o ProxyCommand='nc -X 5 -x ${nc_host}:${port} %h %p'"
 }
 
 _tabby_proxy_off() {

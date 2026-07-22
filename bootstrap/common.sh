@@ -105,6 +105,7 @@ upsert_managed_block() {
     while IFS= read -r line || [ -n "$line" ]; do
       if [ "$line" = "$start" ]; then
         if [ "$in_block" -eq 1 ]; then
+          warn "malformed managed block in $target: nested start marker for $name"
           rm -f "$temporary"
           return 1
         fi
@@ -117,6 +118,10 @@ upsert_managed_block() {
         if [ "$line" = "$end" ]; then
           in_block=0
         fi
+      elif [ "$line" = "$end" ]; then
+        warn "malformed managed block in $target: orphan end marker for $name"
+        rm -f "$temporary"
+        return 1
       else
         printf '%s\n' "$line" >>"$temporary"
       fi
@@ -124,6 +129,7 @@ upsert_managed_block() {
   fi
 
   if [ "$in_block" -eq 1 ]; then
+    warn "malformed managed block in $target: missing end marker for $name"
     rm -f "$temporary"
     return 1
   fi
