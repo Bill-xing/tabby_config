@@ -95,13 +95,17 @@ upsert_managed_block() {
   local content="$3"
   local start="# >>> tabby_config ${name} >>>"
   local end="# <<< tabby_config ${name} <<<"
-  local directory temporary line in_block=0 inserted=0
+  local write_target directory temporary line mode in_block=0 inserted=0
 
-  directory="$(dirname "$target")"
+  write_target="$(_tabby_resolve_symlink_target "$target")" || {
+    warn "cannot resolve managed block target: $target"
+    return 1
+  }
+  directory="$(dirname "$write_target")"
   mkdir -p "$directory"
   temporary="$(mktemp "$directory/.${name}.XXXXXX")"
 
-  if [ -f "$target" ]; then
+  if [ -f "$write_target" ]; then
     while IFS= read -r line || [ -n "$line" ]; do
       if [ "$line" = "$start" ]; then
         if [ "$in_block" -eq 1 ]; then
@@ -125,7 +129,7 @@ upsert_managed_block() {
       else
         printf '%s\n' "$line" >>"$temporary"
       fi
-    done <"$target"
+    done <"$write_target"
   fi
 
   if [ "$in_block" -eq 1 ]; then
@@ -139,12 +143,46 @@ upsert_managed_block() {
     printf '%s\n%s\n%s\n' "$start" "$content" "$end" >>"$temporary"
   fi
 
-  if [ -L "$target" ]; then
-    cat "$temporary" >"$target"
-    rm -f "$temporary"
-  else
-    mv "$temporary" "$target"
+  if [ -e "$write_target" ]; then
+    mode="$(_tabby_file_mode "$write_target")" || {
+      warn "cannot read mode for managed block target: $target"
+      rm -f "$temporary"
+      return 1
+    }
+    if ! chmod "$mode" "$temporary"; then
+      warn "cannot preserve mode for managed block target: $target"
+      rm -f "$temporary"
+      return 1
+    fi
   fi
+
+  if ! mv "$temporary" "$write_target"; then
+    warn "cannot atomically update managed block target: $target"
+    rm -f "$temporary"
+    return 1
+  fi
+}
+
+_tabby_resolve_symlink_target() {
+  local target="$1"
+  local directory link depth=0
+
+  directory="$(cd "$(dirname "$target")" && pwd)" || return 1
+  target="$directory/$(basename "$target")"
+  while [ -L "$target" ]; do
+    depth=$((depth + 1))
+    [ "$depth" -le 40 ] || return 1
+    link="$(readlink "$target")" || return 1
+    case "$link" in
+      /*) target="$link" ;;
+      *) target="$(dirname "$target")/$link" ;;
+    esac
+  done
+  printf '%s\n' "$target"
+}
+
+_tabby_file_mode() {
+  stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null
 }
 
 link_or_copy() {

@@ -19,6 +19,27 @@ git_global_proxy() {
   git config --global --get http.proxy 2>/dev/null || true
 }
 
+_tabby_proxy_endpoint() {
+  local proxy_url="$1"
+  local endpoint_script
+
+  endpoint_script="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/proxy_endpoint.py"
+  printf '%s\n' "$proxy_url" | python3 "$endpoint_script" -
+}
+
+_tabby_normalize_proxy_candidate() {
+  local proxy_url="$1"
+  local endpoint host port url_host
+
+  endpoint="$(_tabby_proxy_endpoint "$proxy_url")" || return 1
+  IFS=$'\t' read -r host port <<<"$endpoint"
+  case "$host" in
+    *:*) url_host="[$host]" ;;
+    *) url_host="$host" ;;
+  esac
+  printf 'http://%s:%s\n' "$url_host" "$port"
+}
+
 _tabby_valid_port() {
   case "$1" in
     ''|*[!0-9]*) return 1 ;;
@@ -37,25 +58,28 @@ _tabby_clash_mixed_port() {
 }
 
 detect_proxy_candidate() {
-  local candidate port
+  local candidate normalized port
 
   for candidate in "${http_proxy:-}" "${https_proxy:-}" "${all_proxy:-}" \
     "${HTTP_PROXY:-}" "${HTTPS_PROXY:-}" "${ALL_PROXY:-}"; do
-    [ -n "$candidate" ] && {
-      printf '%s\n' "$candidate"
+    normalized="$(_tabby_normalize_proxy_candidate "$candidate" 2>/dev/null)" && {
+      printf '%s\n' "$normalized"
       return 0
     }
   done
 
   candidate="$(git_global_proxy)"
-  if [ -n "$candidate" ]; then
-    printf '%s\n' "$candidate"
+  if normalized="$(_tabby_normalize_proxy_candidate "$candidate" 2>/dev/null)"; then
+    printf '%s\n' "$normalized"
     return 0
   fi
 
   if port="$(_tabby_clash_mixed_port)"; then
-    printf 'http://127.0.0.1:%s\n' "$port"
-    return 0
+    candidate="http://127.0.0.1:${port}"
+    if normalized="$(_tabby_normalize_proxy_candidate "$candidate" 2>/dev/null)"; then
+      printf '%s\n' "$normalized"
+      return 0
+    fi
   fi
 
   printf '%s\n' 'http://127.0.0.1:7890'
@@ -87,7 +111,12 @@ _tabby_proxy_on() {
   export ALL_PROXY="socks5://${url_host}:${port}"
   export no_proxy="localhost,127.0.0.1,::1"
   export NO_PROXY="localhost,127.0.0.1,::1"
-  export GIT_SSH_COMMAND="ssh -o ProxyCommand='nc -X 5 -x ${nc_host}:${port} %h %p'"
+  if command -v nc >/dev/null 2>&1; then
+    export GIT_SSH_COMMAND="ssh -o ProxyCommand='nc -X 5 -x ${nc_host}:${port} %h %p'"
+  else
+    unset GIT_SSH_COMMAND
+    printf '%s\n' 'WARN: netcat-openbsd (nc) is required for Git SSH proxy support' >&2
+  fi
 }
 
 _tabby_proxy_off() {
@@ -158,7 +187,7 @@ write_server_shell_environment() {
   local rootless_enabled="$3"
   local environment_dir endpoint host port aliases server_environment source_block common_path
 
-  endpoint="$(python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/proxy_endpoint.py" "$proxy_url")" || return 1
+  endpoint="$(_tabby_proxy_endpoint "$proxy_url")" || return 1
   IFS=$'\t' read -r host port <<<"$endpoint"
   aliases="$(render_proxy_aliases "$host" "$port")" || return 1
 

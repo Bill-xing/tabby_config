@@ -25,7 +25,8 @@ def main() -> None:
     if len(sys.argv) != 2:
         fail()
 
-    raw_url = sys.argv[1].strip()
+    raw_url = sys.stdin.read() if sys.argv[1] == "-" else sys.argv[1]
+    raw_url = raw_url.strip()
     if "://" not in raw_url:
         raw_url = f"http://{raw_url}"
 
