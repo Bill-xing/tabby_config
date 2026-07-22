@@ -208,13 +208,38 @@ docker_plugin_atomic_move() {
 }
 
 (
-  unset -f docker_system_file_status
-  run_docker_sudo() { "$@"; }
+  unset -f docker_system_file_status docker_system_move_file
+  DEFAULT_SYSTEM_MOVE_LOG="$tmp_root/default-system-move-args.bin"
+  : >"$DEFAULT_SYSTEM_MOVE_LOG"
+  run_docker_sudo() {
+    printf '%s\0' "$@" >>"$DEFAULT_SYSTEM_MOVE_LOG"
+    "$@"
+  }
   # shellcheck source=bootstrap/server/docker.sh
   source "$REPO_ROOT/bootstrap/server/docker.sh"
   unsupported_path="$tmp_root/default-system-status-directory"
   mkdir -p "$unsupported_path"
   assert_eq unsupported "$(docker_system_file_status "$unsupported_path")" 'default system path probe rejects directories'
+  : >"$DEFAULT_SYSTEM_MOVE_LOG"
+
+  exact_stage="$tmp_root/default-system-move-stage"
+  exact_target="$tmp_root/default-system-move-target"
+  exact_referent="$tmp_root/default-system-move-referent"
+  mkdir -p "$exact_referent"
+  printf '%s\n' exact-publication >"$exact_stage"
+  ln -s "$exact_referent" "$exact_target"
+  docker_system_move_file "$exact_stage" "$exact_target"
+  [ -f "$exact_target" ] && [ ! -L "$exact_target" ] ||
+    fail 'default system publication replaces a symlink-to-directory at the exact target path'
+  assert_eq exact-publication "$(<"$exact_target")" 'default system publication writes the staged file at the exact target'
+  [ -z "$(find "$exact_referent" -mindepth 1 -print -quit)" ] ||
+    fail 'default system publication leaves no artifact inside the symlink referent'
+  read_nul_log "$DEFAULT_SYSTEM_MOVE_LOG"
+  expected_system_move=(mv -fT -- "$exact_stage" "$exact_target")
+  assert_eq "${#expected_system_move[@]}" "${#NUL_ARGS[@]}" 'default system publication uses one exact GNU mv vector'
+  for move_index in "${!expected_system_move[@]}"; do
+    assert_eq "${expected_system_move[$move_index]}" "${NUL_ARGS[$move_index]}" "default system publication argument $move_index"
+  done
 )
 
 mock_system_path() {
@@ -281,13 +306,11 @@ docker_system_install_file() {
 }
 
 docker_system_move_file() {
-  local source="$1" destination="$2" mapped
+  local source="$1" destination="$2"
   printf '%s\0' move "$source" "$destination" >>"$SYSTEM_FILE_LOG"
   printf 'move|%s|%s\n' "$source" "$destination" >>"$SYSTEM_FILE_TEXT_LOG"
   mock_system_file_maybe_fail "move:$source:$destination" || return $?
-  mapped="$(mock_system_path "$destination")"
-  mkdir -p "$(dirname "$mapped")"
-  mv "$(mock_system_path "$source")" "$mapped"
+  run_docker_sudo mv -fT -- "$source" "$destination"
 }
 
 docker_system_remove_file() {
@@ -318,7 +341,7 @@ docker_subordinate_id_total() {
 }
 
 run_docker_sudo() {
-  local src target
+  local src target mapped_target
   printf '%s\0' "$@" >>"$SUDO_LOG"
   case "${1:-} ${2:-}" in
     'install -m')
@@ -332,6 +355,14 @@ run_docker_sudo() {
         /etc/apt/sources.list.d/docker.sources) cp "$src" "$MOCK_ETC/docker.sources" ;;
         *) fail "unexpected sudo install target: $target" ;;
       esac
+      ;;
+    'mv -fT')
+      [ "$#" -eq 5 ] && [ "${3:-}" = -- ] || fail "unexpected sudo mv invocation: $*"
+      src="${4:-}"
+      target="${5:-}"
+      mapped_target="$(mock_system_path "$target")"
+      mkdir -p "$(dirname "$mapped_target")"
+      mv -fT -- "$(mock_system_path "$src")" "$mapped_target"
       ;;
     'apt-get update') return "$APT_UPDATE_STATUS" ;;
     'apt-get install')
@@ -848,6 +879,32 @@ system_file_ops="$(<"$SYSTEM_FILE_TEXT_LOG")"
 assert_not_contains "$system_file_ops" 'copy|' 'unsupported target fails before snapshot'
 assert_not_contains "$system_file_ops" 'install|' 'unsupported target fails before publication'
 assert_not_contains "$system_file_ops" 'move|' 'unsupported target fails before publication rename'
+assert_temp_targets_removed
+
+reset_case repository-symlink-directory-publish
+SUDO_AVAILABLE=true
+key_referent="$MOCK_ETC/key-referent"
+mkdir -p "$key_referent"
+ln -s "$key_referent" "$MOCK_ETC/keyrings-docker.asc"
+install_docker
+[ -f "$MOCK_ETC/keyrings-docker.asc" ] && [ ! -L "$MOCK_ETC/keyrings-docker.asc" ] ||
+  fail 'successful repository publication replaces the key symlink-to-directory at the exact target'
+assert_eq "$GPG_PAYLOAD" "$(<"$MOCK_ETC/keyrings-docker.asc")" 'successful repository publication writes the key at the exact target'
+[ -z "$(find "$key_referent" -mindepth 1 -print -quit)" ] ||
+  fail 'successful repository publication leaves no artifact inside the key symlink referent'
+assert_temp_targets_removed
+
+reset_case repository-symlink-directory-rollback
+SUDO_AVAILABLE=true
+key_referent="$MOCK_ETC/key-referent"
+mkdir -p "$key_referent"
+ln -s "$key_referent" "$MOCK_ETC/keyrings-docker.asc"
+APT_UPDATE_STATUS=50
+symlink_directory_output="$(install_docker 2>&1)" && fail 'apt failure with a key symlink-to-directory must fail'
+[ -L "$MOCK_ETC/keyrings-docker.asc" ] || fail 'rollback restores the original key symlink-to-directory at the exact target'
+assert_eq "$key_referent" "$(readlink "$MOCK_ETC/keyrings-docker.asc")" 'rollback restores the key symlink-to-directory referent'
+[ -z "$(find "$key_referent" -mindepth 1 -print -quit)" ] ||
+  fail 'repository rollback leaves no publication or restoration artifact inside the key symlink referent'
 assert_temp_targets_removed
 
 reset_case repository-dangling-symlink-rollback

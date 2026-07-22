@@ -136,7 +136,7 @@ fi
 
 if ! declare -F docker_system_move_file >/dev/null 2>&1; then
   docker_system_move_file() {
-    run_docker_sudo mv -f -- "$1" "$2"
+    run_docker_sudo mv -fT -- "$1" "$2"
   }
 fi
 
