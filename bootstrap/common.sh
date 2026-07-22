@@ -797,7 +797,7 @@ install_neovim_linux() {
   tar -xzf "$tmp_dir/$asset" -C "$tmp_dir"
   status=$?
   [ "$status" -eq 0 ] || return "$status"
-  extracted="$(find "$tmp_dir" -maxdepth 1 -type d -name 'nvim-*' | head -n 1)"
+  extracted="$(find "$tmp_dir" -maxdepth 1 -type d -name 'nvim-*' -print -quit)"
   status=$?
   [ "$status" -eq 0 ] || return "$status"
   [ -n "$extracted" ] || die "failed to unpack Neovim archive"
@@ -868,7 +868,7 @@ install_yazi_linux() {
   unzip -q "$tmp_dir/$asset_name" -d "$tmp_dir"
   status=$?
   [ "$status" -eq 0 ] || return "$status"
-  unpacked="$(find "$tmp_dir" -maxdepth 1 -type d -name 'yazi-*' | head -n 1)"
+  unpacked="$(find "$tmp_dir" -maxdepth 1 -type d -name 'yazi-*' -print -quit)"
   status=$?
   [ "$status" -eq 0 ] || return "$status"
   [ -n "$unpacked" ] || die "failed to unpack Yazi archive"

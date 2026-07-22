@@ -161,7 +161,7 @@ install_github_archive_binary() {
     return "$status"
   fi
 
-  binary_path="$(find "$tmp_dir" -type f -name "$binary" | head -n 1)"
+  binary_path="$(find "$tmp_dir" -type f -name "$binary" -print -quit)"
   status=$?
   if [ "$status" -ne 0 ] || [ -z "$binary_path" ]; then
     rm -rf "$tmp_dir" || true
@@ -219,6 +219,8 @@ install_user_cli_stack() {
   local direnv_pattern jq_pattern
 
   arch="$(linux_arch)"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   case "$arch" in
     x86_64)
       fzf_pattern='linux_amd64\.tar\.gz$'

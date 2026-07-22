@@ -327,6 +327,27 @@ if grep -Fx tree-sitter "$EVENT_LOG" >/dev/null || grep -Fx summary "$EVENT_LOG"
 fi
 install_user_cli_stack() { record cli; maybe_fail cli; }
 
+reset_flow_case real-cli-arch-failure
+linux_arch() { return 48; }
+install_github_archive_binary() { record cli-child "$3"; }
+install_github_binary() { record cli-child "$3"; }
+install_user_cli_stack() { install_user_cli_stack_real; }
+if (
+  set +e +u
+  set +o pipefail
+  main >/dev/null 2>&1
+); then
+  fail 'linux_arch failure was masked with strict shell options disabled'
+fi
+if grep -F 'cli-child|' "$EVENT_LOG" >/dev/null; then
+  fail 'linux_arch failure still selected a CLI release asset'
+fi
+if grep -Fx tree-sitter "$EVENT_LOG" >/dev/null || grep -Fx summary "$EVENT_LOG" >/dev/null; then
+  fail 'linux_arch failure did not stop later bootstrap modules'
+fi
+linux_arch() { printf '%s\n' x86_64; }
+install_user_cli_stack() { record cli; maybe_fail cli; }
+
 reset_flow_case nested-config-failure
 ensure_base_dirs() { record ensure-base; maybe_fail ensure-base; }
 link_or_copy() {
@@ -427,6 +448,30 @@ fi
 if grep -Fx 'archive-child|fd' "$EVENT_LOG" >/dev/null || grep -Fx summary "$EVENT_LOG" >/dev/null; then
   fail 'real archive fetch failure did not stop later bootstrap work'
 fi
+
+reset_flow_case real-archive-find-failure-without-pipefail
+archive_find_fixture="$tmp_root/archive-find-fixture.tar.gz"
+archive_find_root="$tmp_root/archive-find-fixture-root"
+mkdir -p "$archive_find_root" "$HOME/.local/bin"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$archive_find_root/fzf"
+chmod +x "$archive_find_root/fzf"
+tar -czf "$archive_find_fixture" -C "$archive_find_root" fzf
+github_latest_asset_url() { printf '%s\n' 'https://fixture.invalid/fzf.tar.gz'; }
+fetch_url() { cp "$archive_find_fixture" "$2"; }
+archive_find_status=0
+if (
+  set +o pipefail
+  find() {
+    command find "$@"
+    return 49
+  }
+  install_github_archive_binary_real fixture/repo 'fixture-pattern' fzf >/dev/null 2>&1
+); then
+  fail 'archive find failure was masked with pipefail disabled'
+else
+  archive_find_status=$?
+fi
+assert_eq 49 "$archive_find_status" 'archive installer preserves find failure status without pipefail'
 
 reset_flow_case real-binary-fetch-failure
 github_latest_asset_url() { printf '%s\n' 'https://fixture.invalid/tool'; }

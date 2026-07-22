@@ -60,6 +60,25 @@ source "$REPO_ROOT/bootstrap/common.sh"
 # shellcheck source=bootstrap/server/environment.sh
 source "$REPO_ROOT/bootstrap/server/environment.sh"
 
+atomic_failure_dir="$tmp_dir/atomic-publish-failure"
+atomic_failure_target="$atomic_failure_dir/server-env.sh"
+atomic_failure_status=0
+mkdir -p "$atomic_failure_dir"
+mv() {
+  return 52
+}
+if _tabby_write_atomic "$atomic_failure_target" 'staged environment'; then
+  fail 'failed atomic publish must return the mv failure'
+else
+  atomic_failure_status=$?
+fi
+unset -f mv
+assert_eq 52 "$atomic_failure_status" 'atomic publish preserves the original mv status'
+mapfile -d '' -t atomic_failure_leftovers < <(
+  find "$atomic_failure_dir" -maxdepth 1 -type f -name '.server-env.sh.*' -print0
+)
+assert_eq 0 "${#atomic_failure_leftovers[@]}" 'failed atomic publish removes its staging file'
+
 nested_bashrc="$HOME/missing/nested/.bashrc"
 upsert_managed_block "$nested_bashrc" server-environment 'nested managed content'
 [ -f "$nested_bashrc" ] || fail 'managed block creates nested target parents'

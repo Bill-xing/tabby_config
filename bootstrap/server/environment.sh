@@ -147,6 +147,11 @@ _tabby_write_atomic() {
     return "$status"
   fi
   mv "$temporary" "$target"
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    rm -f "$temporary" || true
+    return "$status"
+  fi
 }
 
 _tabby_server_environment_content() {

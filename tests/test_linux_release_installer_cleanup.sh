@@ -78,4 +78,28 @@ assert_installer_clears_return_trap install_neovim_linux
 assert_installer_clears_return_trap install_lazygit_linux
 assert_installer_clears_return_trap install_yazi_linux
 
+assert_find_failure_without_pipefail() {
+  local installer="$1"
+  local expected_status="$2"
+  local actual_status=0
+
+  if (
+    set +o pipefail
+    find() {
+      command find "$@"
+      return "$expected_status"
+    }
+    "$installer" >/dev/null 2>&1
+  ); then
+    fail "$installer masked find failure with pipefail disabled"
+  else
+    actual_status=$?
+  fi
+  [ "$actual_status" -eq "$expected_status" ] ||
+    fail "$installer returned $actual_status instead of find status $expected_status"
+}
+
+assert_find_failure_without_pipefail install_yazi_linux 51
+assert_find_failure_without_pipefail install_neovim_linux 50
+
 printf 'Linux release installer cleanup checks passed\n'
