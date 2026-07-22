@@ -22,6 +22,14 @@ assert_contains() {
   esac
 }
 
+assert_not_contains() {
+  local value="$1" unexpected="$2" message="$3"
+  case "$value" in
+    *"$unexpected"*) fail "$message: unexpectedly found '$unexpected' in '$value'" ;;
+    *) ;;
+  esac
+}
+
 assert_file_contains() {
   local path="$1" expected="$2" message="$3"
   grep -F -- "$expected" "$path" >/dev/null || fail "$message: missing '$expected'"
@@ -81,7 +89,9 @@ ROOTLESS_INSTALL_STATUS=0
 USER_SYSTEMCTL_STATUS=0
 USER_SERVICE_STATUS=0
 SYSTEMCTL_STATUS=0
-APT_STATUS=0
+USERMOD_STATUS=0
+APT_UPDATE_STATUS=0
+APT_INSTALL_STATUS=0
 ARCH=x86_64
 MOCK_UID=1000
 MOCK_USER=tester
@@ -92,8 +102,14 @@ SUBGID_TOTAL=65536
 OS_ID=ubuntu
 OS_CODENAME=noble
 DPKG_ARCH=amd64
-CHECKSUM_MODE=good
+BUILDX_CHECKSUM_MODE=good
+COMPOSE_CHECKSUM_MODE=good
 EMPTY_KIND=''
+FETCH_FAIL_KIND=''
+LOOKUP_FAIL_KIND=''
+APT_PROVIDES_DOCKER=true
+APT_PROVIDES_BUILDX=true
+APT_PROVIDES_COMPOSE=true
 declare -A INSTALLED_PACKAGES=()
 
 docker_command_discovery() {
@@ -173,16 +189,18 @@ run_docker_sudo() {
         *) fail "unexpected sudo install target: $target" ;;
       esac
       ;;
-    'apt-get update') return "$APT_STATUS" ;;
+    'apt-get update') return "$APT_UPDATE_STATUS" ;;
     'apt-get install')
       printf '%s\0' "$@" >>"$APT_INSTALL_LOG"
-      [ "$APT_STATUS" -eq 0 ] || return "$APT_STATUS"
-      DOCKER_AVAILABLE=true
-      : >"$MOCK_DOCKER"
-      : >"$MOCK_BIN/buildx.ok"
-      : >"$MOCK_BIN/compose.ok"
+      [ "$APT_INSTALL_STATUS" -eq 0 ] || return "$APT_INSTALL_STATUS"
+      if [ "$APT_PROVIDES_DOCKER" = true ]; then
+        DOCKER_AVAILABLE=true
+        : >"$MOCK_DOCKER"
+      fi
+      [ "$APT_PROVIDES_BUILDX" != true ] || : >"$MOCK_BIN/buildx.ok"
+      [ "$APT_PROVIDES_COMPOSE" != true ] || : >"$MOCK_BIN/compose.ok"
       ;;
-    'usermod -aG') return 0 ;;
+    'usermod -aG') return "$USERMOD_STATUS" ;;
     *)
       if [ "${1:-}" = "$MOCK_DOCKER" ] && [ "${2:-}" = info ]; then
         return "$SUDO_INFO_STATUS"
@@ -217,17 +235,19 @@ run_rootless_docker_installer() {
 }
 
 docker_github_latest_asset_url() {
-  local repo="$1" pattern="$2"
+  local repo="$1" pattern="$2" lookup_kind url
   printf '%s|%s\n' "$repo" "$pattern" >>"$GITHUB_LOG"
   case "$repo|$pattern" in
-    'docker/buildx|'^'buildx-v'*'linux-amd64$') printf '%s\n' 'mock://buildx/buildx-v1.linux-amd64' ;;
-    'docker/buildx|'^'buildx-v'*'linux-arm64$') printf '%s\n' 'mock://buildx/buildx-v1.linux-arm64' ;;
-    'docker/buildx|^checksums\.txt$') printf '%s\n' 'mock://buildx/checksums.txt' ;;
-    'docker/compose|^docker-compose-linux-x86_64$') printf '%s\n' 'mock://compose/docker-compose-linux-x86_64' ;;
-    'docker/compose|^docker-compose-linux-aarch64$') printf '%s\n' 'mock://compose/docker-compose-linux-aarch64' ;;
-    'docker/compose|^checksums\.txt$') printf '%s\n' 'mock://compose/checksums.txt' ;;
+    'docker/buildx|'^'buildx-v'*'linux-amd64$') lookup_kind=buildx-release; url='mock://buildx/buildx-v1.linux-amd64' ;;
+    'docker/buildx|'^'buildx-v'*'linux-arm64$') lookup_kind=buildx-release; url='mock://buildx/buildx-v1.linux-arm64' ;;
+    'docker/buildx|^checksums\.txt$') lookup_kind=buildx-manifest; url='mock://buildx/checksums.txt' ;;
+    'docker/compose|^docker-compose-linux-x86_64$') lookup_kind=compose-release; url='mock://compose/docker-compose-linux-x86_64' ;;
+    'docker/compose|^docker-compose-linux-aarch64$') lookup_kind=compose-release; url='mock://compose/docker-compose-linux-aarch64' ;;
+    'docker/compose|^checksums\.txt$') lookup_kind=compose-manifest; url='mock://compose/checksums.txt' ;;
     *) fail "unexpected GitHub asset lookup: $repo $pattern" ;;
   esac
+  [ "$LOOKUP_FAIL_KIND" != "$lookup_kind" ] || return 1
+  printf '%s\n' "$url"
 }
 
 docker_fetch_url() {
@@ -241,26 +261,25 @@ docker_fetch_url() {
       kind=buildx-checksum
       binary="$LAST_BUILDX_TARGET"
       hash="$(sha256_file "$binary")"
-      [ "$CHECKSUM_MODE" != mismatch ] || hash=0000000000000000000000000000000000000000000000000000000000000000
+      [ "$BUILDX_CHECKSUM_MODE" != mismatch ] || hash=0000000000000000000000000000000000000000000000000000000000000000
       payload_name="$(basename "$binary")"
-      [ "$CHECKSUM_MODE" != missing ] || payload_name=wrong-buildx-name
-      printf '%s  %s\n' "$hash" "$payload_name" >"$output"
-      return 0
+      [ "$BUILDX_CHECKSUM_MODE" != missing ] || payload_name=wrong-buildx-name
+      payload="$hash  $payload_name"
       ;;
     mock://compose/checksums.txt)
       kind=compose-checksum
       binary="$LAST_COMPOSE_TARGET"
       hash="$(sha256_file "$binary")"
-      [ "$CHECKSUM_MODE" != mismatch ] || hash=0000000000000000000000000000000000000000000000000000000000000000
+      [ "$COMPOSE_CHECKSUM_MODE" != mismatch ] || hash=0000000000000000000000000000000000000000000000000000000000000000
       payload_name="$(basename "$binary")"
-      [ "$CHECKSUM_MODE" != missing ] || payload_name=wrong-compose-name
-      printf '%s  %s\n' "$hash" "$payload_name" >"$output"
-      return 0
+      [ "$COMPOSE_CHECKSUM_MODE" != missing ] || payload_name=wrong-compose-name
+      payload="$hash  $payload_name"
       ;;
     mock://buildx/*) kind=buildx; payload='buildx plugin fixture'; LAST_BUILDX_TARGET="$output" ;;
     mock://compose/*) kind=compose; payload='compose plugin fixture'; LAST_COMPOSE_TARGET="$output" ;;
     *) fail "unexpected download: $url" ;;
   esac
+  [ "$FETCH_FAIL_KIND" != "$kind" ] || return 1
   if [ "$EMPTY_KIND" = "$kind" ]; then
     : >"$output"
   else
@@ -286,6 +305,8 @@ reset_case() {
   INSTALLER_LOG="$tmp_root/$name/installer-args.bin"
   GITHUB_LOG="$tmp_root/$name/github.log"
   DISCOVERY_LOG="$tmp_root/$name/discovery.log"
+  CASE_STDOUT="$tmp_root/$name/stdout.log"
+  CASE_STDERR="$tmp_root/$name/stderr.log"
   export HOME MOCK_BIN MOCK_DOCKER MOCK_ETC FETCH_URL_LOG FETCH_TARGET_LOG
   mkdir -p "$HOME" "$MOCK_BIN" "$MOCK_ETC"
   : >"$FETCH_URL_LOG"
@@ -297,6 +318,8 @@ reset_case() {
   : >"$INSTALLER_LOG"
   : >"$GITHUB_LOG"
   : >"$DISCOVERY_LOG"
+  : >"$CASE_STDOUT"
+  : >"$CASE_STDERR"
   DOCKER_AVAILABLE=false
   SUDO_AVAILABLE=false
   DOCKER_VERSION_STATUS=0
@@ -308,7 +331,9 @@ reset_case() {
   USER_SYSTEMCTL_STATUS=0
   USER_SERVICE_STATUS=0
   SYSTEMCTL_STATUS=0
-  APT_STATUS=0
+  USERMOD_STATUS=0
+  APT_UPDATE_STATUS=0
+  APT_INSTALL_STATUS=0
   ARCH=x86_64
   MOCK_UID=1000
   MOCK_USER=tester
@@ -319,8 +344,14 @@ reset_case() {
   OS_ID=ubuntu
   OS_CODENAME=noble
   DPKG_ARCH=amd64
-  CHECKSUM_MODE=good
+  BUILDX_CHECKSUM_MODE=good
+  COMPOSE_CHECKSUM_MODE=good
   EMPTY_KIND=''
+  FETCH_FAIL_KIND=''
+  LOOKUP_FAIL_KIND=''
+  APT_PROVIDES_DOCKER=true
+  APT_PROVIDES_BUILDX=true
+  APT_PROVIDES_COMPOSE=true
   INSTALLED_PACKAGES=()
   LAST_BUILDX_TARGET=''
   LAST_COMPOSE_TARGET=''
@@ -337,21 +368,64 @@ reset_case existing-healthy
 DOCKER_AVAILABLE=true
 COMPOSE_STATUS=0
 BUILDX_STATUS=0
-install_docker
+install_docker >"$CASE_STDOUT" 2>"$CASE_STDERR"
+assert_contains "$(<"$CASE_STDOUT")" 'Docker version 99.0.0, build fixture' 'existing Docker reports its client version'
+assert_empty "$CASE_STDERR" 'healthy existing Docker emits no warnings'
+read_nul_log "$DOCKER_EXEC_LOG"
+expected_existing_calls=(
+  "$MOCK_DOCKER" --version
+  "$MOCK_DOCKER" --version
+  "$MOCK_DOCKER" compose version
+  "$MOCK_DOCKER" buildx version
+  "$MOCK_DOCKER" info
+)
+assert_eq "${#expected_existing_calls[@]}" "${#NUL_ARGS[@]}" 'healthy existing Docker runs only report and capability probes'
+for docker_index in "${!expected_existing_calls[@]}"; do
+  assert_eq "${expected_existing_calls[$docker_index]}" "${NUL_ARGS[$docker_index]}" "healthy existing Docker argument $docker_index"
+done
 assert_empty "$DISCOVERY_LOG" 'existing Docker returns before sudo discovery'
 assert_empty "$FETCH_URL_LOG" 'existing Docker does not download'
 assert_empty "$SUDO_LOG" 'existing Docker does not invoke sudo'
+assert_empty "$INSTALLER_LOG" 'existing Docker does not invoke the rootless installer'
+assert_empty "$SYSTEMCTL_LOG" 'existing Docker does not manage services'
+assert_empty "$GITHUB_LOG" 'existing Docker does not resolve plugin releases'
 assert_eq false "$SERVER_DOCKER_REUSED_WITH_WARNINGS" 'healthy Docker has no warning state'
 
-reset_case existing-warnings
-DOCKER_AVAILABLE=true
-COMPOSE_STATUS=1
-BUILDX_STATUS=1
-INFO_STATUS=1
-install_docker
-assert_eq true "$SERVER_DOCKER_REUSED_WITH_WARNINGS" 'missing optional capabilities set warning state'
-assert_empty "$DISCOVERY_LOG" 'warning reuse still returns before sudo discovery'
-assert_empty "$FETCH_URL_LOG" 'warning reuse never reinstalls'
+for missing_capability in compose buildx info; do
+  reset_case "existing-warning-$missing_capability"
+  DOCKER_AVAILABLE=true
+  COMPOSE_STATUS=0
+  BUILDX_STATUS=0
+  INFO_STATUS=0
+  case "$missing_capability" in
+    compose) COMPOSE_STATUS=1; warning_name='Docker Compose' ;;
+    buildx) BUILDX_STATUS=1; warning_name='Docker Buildx' ;;
+    info) INFO_STATUS=1; warning_name='Docker daemon' ;;
+  esac
+  install_docker >"$CASE_STDOUT" 2>"$CASE_STDERR"
+  expected_existing_calls=(
+    "$MOCK_DOCKER" --version
+    "$MOCK_DOCKER" --version
+    "$MOCK_DOCKER" compose version
+    "$MOCK_DOCKER" buildx version
+    "$MOCK_DOCKER" info
+  )
+  assert_contains "$(<"$CASE_STDOUT")" 'Docker version 99.0.0, build fixture' "$missing_capability warning reuse reports the client version"
+  assert_contains "$(<"$CASE_STDERR")" "$warning_name" "$missing_capability warning names the failed probe"
+  assert_eq 1 "$(grep -c '^WARN:' "$CASE_STDERR")" "$missing_capability emits one focused warning"
+  read_nul_log "$DOCKER_EXEC_LOG"
+  assert_eq "${#expected_existing_calls[@]}" "${#NUL_ARGS[@]}" "$missing_capability warning still runs every existing-Docker probe"
+  for docker_index in "${!expected_existing_calls[@]}"; do
+    assert_eq "${expected_existing_calls[$docker_index]}" "${NUL_ARGS[$docker_index]}" "$missing_capability warning Docker argument $docker_index"
+  done
+  assert_eq true "$SERVER_DOCKER_REUSED_WITH_WARNINGS" "$missing_capability warning sets reuse state"
+  assert_empty "$DISCOVERY_LOG" "$missing_capability warning returns before sudo discovery"
+  assert_empty "$FETCH_URL_LOG" "$missing_capability warning never reinstalls"
+  assert_empty "$SUDO_LOG" "$missing_capability warning never invokes sudo"
+  assert_empty "$INSTALLER_LOG" "$missing_capability warning never invokes rootless installer"
+  assert_empty "$SYSTEMCTL_LOG" "$missing_capability warning never manages services"
+  assert_empty "$GITHUB_LOG" "$missing_capability warning never resolves releases"
+done
 
 reset_case sudo-install
 SUDO_AVAILABLE=true
@@ -414,14 +488,36 @@ for prerequisite in root uidmap gidmap subuid-missing subuid-small subgid-missin
     root) MOCK_UID=0 ; remedy='non-root user' ;;
     uidmap) UIDMAP_PRESENT=false; remedy='sudo apt-get install uidmap' ;;
     gidmap) GIDMAP_PRESENT=false; remedy='sudo apt-get install uidmap' ;;
-    subuid-missing) SUBUID_TOTAL=0; remedy='sudo usermod --add-subuids' ;;
-    subuid-small) SUBUID_TOTAL=65535; remedy='sudo usermod --add-subuids' ;;
-    subgid-missing) SUBGID_TOTAL=0; remedy='sudo usermod --add-subgids' ;;
-    subgid-small) SUBGID_TOTAL=65535; remedy='sudo usermod --add-subgids' ;;
+    subuid-missing) SUBUID_TOTAL=0; allocation_total=0; remedy='sudo usermod --add-subuids' ;;
+    subuid-small) SUBUID_TOTAL=65535; allocation_total=65535; remedy='sudo usermod --add-subuids' ;;
+    subgid-missing) SUBGID_TOTAL=0; allocation_total=0; remedy='sudo usermod --add-subgids' ;;
+    subgid-small) SUBGID_TOTAL=65535; allocation_total=65535; remedy='sudo usermod --add-subgids' ;;
     systemd) USER_SYSTEMCTL_STATUS=1; remedy='systemctl --user' ;;
   esac
   prerequisite_output="$(install_docker 2>&1)" && fail "$prerequisite must fail"
   assert_contains "$prerequisite_output" "$remedy" "$prerequisite failure names its remedy"
+  case "$prerequisite" in
+    subuid-*)
+      assert_contains "$prerequisite_output" '/etc/subuid' "$prerequisite names the allocation file"
+      assert_contains "$prerequisite_output" tester "$prerequisite names the affected user"
+      assert_contains "$prerequisite_output" "provides $allocation_total" "$prerequisite reports the detected allocation total"
+      assert_contains "$prerequisite_output" '>=65536 total' "$prerequisite names the required total"
+      assert_contains "$prerequisite_output" 'Administrator template' "$prerequisite labels the admin action as a template"
+      assert_contains "$prerequisite_output" 'non-overlapping' "$prerequisite requires a collision-safe range"
+      assert_contains "$prerequisite_output" '<START>-<END>' "$prerequisite provides a safe admin template"
+      assert_not_contains "$prerequisite_output" '100000-165535' "$prerequisite does not propose a potentially overlapping range"
+      ;;
+    subgid-*)
+      assert_contains "$prerequisite_output" '/etc/subgid' "$prerequisite names the allocation file"
+      assert_contains "$prerequisite_output" tester "$prerequisite names the affected user"
+      assert_contains "$prerequisite_output" "provides $allocation_total" "$prerequisite reports the detected allocation total"
+      assert_contains "$prerequisite_output" '>=65536 total' "$prerequisite names the required total"
+      assert_contains "$prerequisite_output" 'Administrator template' "$prerequisite labels the admin action as a template"
+      assert_contains "$prerequisite_output" 'non-overlapping' "$prerequisite requires a collision-safe range"
+      assert_contains "$prerequisite_output" '<START>-<END>' "$prerequisite provides a safe admin template"
+      assert_not_contains "$prerequisite_output" '100000-165535' "$prerequisite does not propose a potentially overlapping range"
+      ;;
+  esac
   assert_empty "$FETCH_URL_LOG" "$prerequisite fails before any download"
   assert_empty "$SUDO_LOG" "$prerequisite never tries apt"
 done
@@ -432,23 +528,46 @@ install_docker
 assert_file_contains "$FETCH_URL_LOG" 'mock://buildx/buildx-v1.linux-arm64' 'arm64 Buildx asset mapping'
 assert_file_contains "$FETCH_URL_LOG" 'mock://compose/docker-compose-linux-aarch64' 'arm64 Compose asset mapping'
 
-for unsafe in mismatch missing; do
-  reset_case "checksum-$unsafe"
-  CHECKSUM_MODE="$unsafe"
-  checksum_output="$(install_docker 2>&1)" && fail "$unsafe plugin checksum must fail"
-  assert_contains "$checksum_output" 'checksum' "$unsafe checksum failure is actionable"
-  [ ! -e "$HOME/.docker/cli-plugins/docker-buildx" ] || fail "$unsafe checksum never installs Buildx"
+for unsafe in missing mismatch; do
+  reset_case "buildx-checksum-$unsafe"
+  BUILDX_CHECKSUM_MODE="$unsafe"
+  checksum_output="$(install_docker 2>&1)" && fail "Buildx $unsafe checksum must fail"
+  assert_contains "$checksum_output" 'checksum' "Buildx $unsafe checksum failure is actionable"
+  [ ! -e "$HOME/.docker/cli-plugins/docker-buildx" ] || fail "Buildx $unsafe checksum never installs Buildx"
+  assert_temp_targets_removed
+
+  reset_case "compose-checksum-$unsafe"
+  COMPOSE_CHECKSUM_MODE="$unsafe"
+  checksum_output="$(install_docker 2>&1)" && fail "Compose $unsafe checksum must fail"
+  assert_contains "$checksum_output" 'checksum' "Compose $unsafe checksum failure is actionable"
+  [ -x "$HOME/.docker/cli-plugins/docker-buildx" ] || fail "Compose $unsafe checksum case reaches Compose after verified Buildx install"
+  [ ! -e "$HOME/.docker/cli-plugins/docker-compose" ] || fail "Compose $unsafe checksum never installs Compose"
   assert_temp_targets_removed
 done
 
-for empty_kind in rootless buildx compose; do
+reset_case empty-gpg
+SUDO_AVAILABLE=true
+EMPTY_KIND=gpg
+empty_output="$(install_docker 2>&1)" && fail 'empty Docker GPG download must fail'
+assert_contains "$empty_output" 'signing key is empty' 'empty Docker GPG failure is explicit'
+[ ! -e "$MOCK_ETC/keyrings-docker.asc" ] || fail 'empty Docker GPG is never installed'
+assert_empty "$SUDO_LOG" 'empty Docker GPG fails before sudo mutation'
+assert_temp_targets_removed
+
+for empty_kind in rootless buildx buildx-checksum compose compose-checksum; do
   reset_case "empty-$empty_kind"
   EMPTY_KIND="$empty_kind"
   empty_output="$(install_docker 2>&1)" && fail "empty $empty_kind download must fail"
   assert_contains "$empty_output" 'empty' "empty $empty_kind failure is explicit"
   case "$empty_kind" in
-    rootless|buildx) [ ! -e "$HOME/.docker/cli-plugins/docker-buildx" ] || fail "empty $empty_kind never installs Buildx" ;;
-    compose) [ ! -e "$HOME/.docker/cli-plugins/docker-compose" ] || fail 'empty Compose is never installed' ;;
+    rootless|buildx|buildx-checksum)
+      [ ! -e "$HOME/.docker/cli-plugins/docker-buildx" ] || fail "empty $empty_kind never installs Buildx"
+      [ "$empty_kind" != rootless ] || assert_empty "$INSTALLER_LOG" 'empty rootless script is never executed'
+      ;;
+    compose|compose-checksum)
+      [ -x "$HOME/.docker/cli-plugins/docker-buildx" ] || fail "empty $empty_kind case independently reaches Compose after Buildx"
+      [ ! -e "$HOME/.docker/cli-plugins/docker-compose" ] || fail "empty $empty_kind never installs Compose"
+      ;;
   esac
   assert_temp_targets_removed
 done
@@ -467,12 +586,107 @@ backup_path="$(find "$HOME/.docker/cli-plugins" -maxdepth 1 -name 'docker-buildx
 [ -n "$backup_path" ] || fail 'conflicting Buildx plugin is backed up'
 assert_eq preserve-buildx "$(<"$backup_path")" 'Buildx backup preserves prior content'
 
-reset_case apt-failure
+reset_case gpg-fetch-failure
 SUDO_AVAILABLE=true
-APT_STATUS=1
-apt_output="$(install_docker 2>&1)" && fail 'apt failure must propagate'
-assert_contains "$apt_output" 'apt-get' 'apt failure is actionable'
+FETCH_FAIL_KIND=gpg
+gpg_output="$(install_docker 2>&1)" && fail 'Docker GPG fetch failure must propagate'
+assert_contains "$gpg_output" 'failed to download' 'Docker GPG fetch failure is actionable'
+assert_empty "$SUDO_LOG" 'Docker GPG fetch failure stops before sudo mutation'
 assert_temp_targets_removed
+
+reset_case apt-update-failure
+SUDO_AVAILABLE=true
+APT_UPDATE_STATUS=7
+apt_output="$(install_docker 2>&1)" && fail 'apt update failure must propagate'
+assert_contains "$apt_output" 'apt-get update failed' 'apt update failure is actionable'
+assert_empty "$APT_INSTALL_LOG" 'apt update failure stops before package installation'
+assert_empty "$SYSTEMCTL_LOG" 'apt update failure stops before service mutation'
+assert_temp_targets_removed
+
+reset_case apt-install-failure
+SUDO_AVAILABLE=true
+APT_INSTALL_STATUS=8
+apt_output="$(install_docker 2>&1)" && fail 'exact package install failure must propagate'
+assert_contains "$apt_output" 'apt-get install failed' 'package install failure is actionable'
+[ -s "$APT_INSTALL_LOG" ] || fail 'package install failure reaches the exact install invocation'
+assert_empty "$SYSTEMCTL_LOG" 'package install failure stops before service mutation'
+assert_temp_targets_removed
+
+reset_case system-service-failure
+SUDO_AVAILABLE=true
+SYSTEMCTL_STATUS=9
+system_output="$(install_docker 2>&1)" && fail 'system Docker service failure must propagate'
+assert_contains "$system_output" 'system Docker service' 'system Docker service failure is actionable'
+sudo_calls="$(tr '\0' ' ' <"$SUDO_LOG")"
+assert_not_contains "$sudo_calls" 'usermod' 'system service failure stops before group mutation'
+assert_temp_targets_removed
+
+reset_case usermod-failure
+SUDO_AVAILABLE=true
+USERMOD_STATUS=10
+usermod_output="$(install_docker 2>&1)" && fail 'Docker group usermod failure must propagate'
+assert_contains "$usermod_output" 'docker group' 'usermod failure is actionable'
+assert_empty "$DOCKER_EXEC_LOG" 'usermod failure stops before client verification'
+assert_temp_targets_removed
+
+reset_case system-client-failure
+SUDO_AVAILABLE=true
+DOCKER_VERSION_STATUS=11
+client_output="$(install_docker 2>&1)" && fail 'installed Docker client failure must propagate'
+assert_contains "$client_output" 'docker --version' 'installed client failure is actionable'
+docker_calls="$(tr '\0' ' ' <"$DOCKER_EXEC_LOG")"
+assert_not_contains "$docker_calls" 'buildx' 'client failure stops before Buildx verification'
+assert_temp_targets_removed
+
+reset_case system-buildx-failure
+SUDO_AVAILABLE=true
+APT_PROVIDES_BUILDX=false
+buildx_output="$(install_docker 2>&1)" && fail 'installed Docker Buildx failure must propagate'
+assert_contains "$buildx_output" 'Buildx verification failed' 'installed Buildx failure is actionable'
+docker_calls="$(tr '\0' ' ' <"$DOCKER_EXEC_LOG")"
+assert_not_contains "$docker_calls" 'compose' 'Buildx failure stops before Compose verification'
+assert_temp_targets_removed
+
+reset_case system-compose-failure
+SUDO_AVAILABLE=true
+APT_PROVIDES_COMPOSE=false
+compose_output="$(install_docker 2>&1)" && fail 'installed Docker Compose failure must propagate'
+assert_contains "$compose_output" 'Compose verification failed' 'installed Compose failure is actionable'
+sudo_calls="$(tr '\0' ' ' <"$SUDO_LOG")"
+assert_not_contains "$sudo_calls" "$MOCK_DOCKER info" 'Compose failure stops before daemon verification'
+assert_temp_targets_removed
+
+reset_case system-daemon-failure
+SUDO_AVAILABLE=true
+SUDO_INFO_STATUS=12
+daemon_output="$(install_docker 2>&1)" && fail 'sudo docker info failure must propagate'
+assert_contains "$daemon_output" 'sudo docker info' 'sudo daemon failure is actionable'
+assert_temp_targets_removed
+
+for plugin_failure in release download manifest-fetch; do
+  reset_case "plugin-$plugin_failure-failure"
+  case "$plugin_failure" in
+    release) LOOKUP_FAIL_KIND=buildx-release; failure_text='release asset' ;;
+    download) FETCH_FAIL_KIND=buildx; failure_text='download the official Docker buildx plugin' ;;
+    manifest-fetch) FETCH_FAIL_KIND=buildx-checksum; failure_text='download the Docker buildx checksum manifest' ;;
+  esac
+  plugin_output="$(install_docker 2>&1)" && fail "plugin $plugin_failure failure must propagate"
+  assert_contains "$plugin_output" "$failure_text" "plugin $plugin_failure failure is actionable"
+  [ ! -e "$HOME/.docker/cli-plugins/docker-buildx" ] || fail "plugin $plugin_failure failure never installs Buildx"
+  assert_not_contains "$(<"$GITHUB_LOG")" 'docker/compose' "plugin $plugin_failure failure stops before Compose lookup"
+  assert_not_contains "$(<"$FETCH_URL_LOG")" 'mock://compose/' "plugin $plugin_failure failure stops before Compose download"
+  read_nul_log "$SYSTEMCTL_LOG"
+  expected_failed_plugin_systemctl=(user show-environment)
+  assert_eq "${#expected_failed_plugin_systemctl[@]}" "${#NUL_ARGS[@]}" "plugin $plugin_failure failure never enables the user Docker service"
+  for systemctl_index in "${!expected_failed_plugin_systemctl[@]}"; do
+    assert_eq "${expected_failed_plugin_systemctl[$systemctl_index]}" "${NUL_ARGS[$systemctl_index]}" "plugin $plugin_failure systemctl argument $systemctl_index"
+  done
+  case "$plugin_failure" in
+    release) assert_not_contains "$(<"$FETCH_URL_LOG")" 'mock://buildx/' 'release lookup failure stops before plugin download' ;;
+    download) assert_not_contains "$(<"$FETCH_URL_LOG")" 'mock://buildx/checksums.txt' 'plugin download failure stops before manifest fetch' ;;
+  esac
+  assert_temp_targets_removed
+done
 
 reset_case rootless-installer-failure
 ROOTLESS_INSTALL_STATUS=1

@@ -306,13 +306,13 @@ _docker_require_rootless_prerequisites() {
   subuid_total="$(docker_subordinate_id_total subuid "$user" "$uid" 2>/dev/null || true)"
   case "$subuid_total" in ''|*[!0-9]*) subuid_total=0 ;; esac
   if [ "$subuid_total" -lt 65536 ]; then
-    warn "rootless Docker needs at least 65536 subordinate UIDs for $user; ask an administrator to run: sudo usermod --add-subuids 100000-165535 $user"
+    warn "/etc/subuid provides $subuid_total subordinate UIDs for $user; rootless Docker requires >=65536 total. Administrator template (choose a non-overlapping range): sudo usermod --add-subuids <START>-<END> $user"
     return 1
   fi
   subgid_total="$(docker_subordinate_id_total subgid "$user" "$uid" 2>/dev/null || true)"
   case "$subgid_total" in ''|*[!0-9]*) subgid_total=0 ;; esac
   if [ "$subgid_total" -lt 65536 ]; then
-    warn "rootless Docker needs at least 65536 subordinate GIDs for $user; ask an administrator to run: sudo usermod --add-subgids 100000-165535 $user"
+    warn "/etc/subgid provides $subgid_total subordinate GIDs for $user; rootless Docker requires >=65536 total. Administrator template (choose a non-overlapping range): sudo usermod --add-subgids <START>-<END> $user"
     return 1
   fi
   if ! docker_systemctl user show-environment >/dev/null 2>&1; then
