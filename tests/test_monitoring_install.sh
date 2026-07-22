@@ -74,6 +74,7 @@ mark_conda_tools() {
   shift
   local tool
   mkdir -p "$prefix/conda-meta" "$prefix/bin"
+  printf '%s\n' 'mock conda history' >"$prefix/conda-meta/history"
   printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$prefix/bin/python"
   chmod +x "$prefix/bin/python"
   for tool in "$@"; do
@@ -208,9 +209,28 @@ assert_eq 0 "$(wc -c <"$APT_LOG")" 'rootless does not invoke apt'
 
 reset_case recognized-prefix
 mkdir -p "$HOME/.local/share/tabby-config/monitoring/conda-meta"
+printf '%s\n' 'recognized conda history' >"$HOME/.local/share/tabby-config/monitoring/conda-meta/history"
 install_monitoring_tools
 read_nul_log "$CONDA_LOG"
 assert_eq install "${NUL_ARGS[0]}" 'recognized prefix uses conda install'
+
+reset_case partial-prefix-recovery
+partial_prefix="$HOME/.local/share/tabby-config/monitoring"
+mkdir -p "$partial_prefix/conda-meta"
+printf '%s\n' 'preserve this partial environment' >"$partial_prefix/unrelated-state"
+install_monitoring_tools
+read_nul_log "$CONDA_LOG"
+assert_eq create "${NUL_ARGS[0]}" 'partial prefix is recovered with conda create'
+partial_backup="$(find "$(dirname "$partial_prefix")" -maxdepth 1 -name 'monitoring.bak.*' -print -quit)"
+[ -n "$partial_backup" ] || fail 'partial monitoring prefix is backed up before create'
+assert_eq 'preserve this partial environment' "$(<"$partial_backup/unrelated-state")" 'partial prefix backup preserves unrelated content'
+for tool in nvitop btop htop; do
+  [ -L "$HOME/.local/bin/$tool" ] || fail "partial-prefix recovery links $tool"
+  tool_usable "$tool" || fail "partial-prefix recovery verifies $tool"
+done
+partial_conda_bytes="$(wc -c <"$CONDA_LOG")"
+install_monitoring_tools
+assert_eq "$partial_conda_bytes" "$(wc -c <"$CONDA_LOG")" 'partial-prefix recovery rerun is idempotent'
 
 reset_case symlinks
 install_monitoring_tools

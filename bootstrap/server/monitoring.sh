@@ -45,9 +45,12 @@ _monitoring_install_conda_packages() {
   local -a packages=("$@")
 
   [ "${#packages[@]}" -gt 0 ] || return 0
-  if [ -d "$prefix/conda-meta" ]; then
+  if [ -f "$prefix/conda-meta/history" ]; then
     "$conda" install --yes --prefix "$prefix" "${packages[@]}" || return 1
   else
+    if [ -e "$prefix" ] || [ -L "$prefix" ]; then
+      backup_existing "$prefix" || return 1
+    fi
     "$conda" create --yes --prefix "$prefix" "${packages[@]}" || return 1
   fi
 }
