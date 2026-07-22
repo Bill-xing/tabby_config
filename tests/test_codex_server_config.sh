@@ -433,6 +433,24 @@ assert_fallback_rejected \
   "$tmp_dir/fallback-invalid-existing.toml" \
   "fallback validation must reject malformed existing values"
 
+printf 'custom = true\rbad = false\n' >"$tmp_dir/fallback-bare-cr.toml"
+assert_fallback_rejected \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-bare-cr.toml" \
+  "fallback validation must reject bare carriage returns"
+
+printf '\302\240custom_value = true\n' >"$tmp_dir/fallback-unicode-space.toml"
+assert_fallback_rejected \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-unicode-space.toml" \
+  "fallback validation must reject non-ASCII syntax whitespace"
+
+printf 'custom_value = 1\331\241\n' >"$tmp_dir/fallback-unicode-digit.toml"
+assert_fallback_rejected \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-unicode-digit.toml" \
+  "fallback validation must reject Unicode digits in numeric tokens"
+
 assert_fallback_rejected \
   "$FRAGMENT" \
   "$tmp_dir/duplicate-existing-key.toml" \
@@ -589,6 +607,30 @@ assert_fallback_rejected \
   "$tmp_dir/fallback-dotted-table-collision.toml" \
   "fallback validation must reject dotted-key and table collisions"
 
+cat >"$tmp_dir/fallback-implicit-to-array.toml" <<'EOF'
+[a.b]
+x = 1
+
+[[a]]
+y = 2
+EOF
+assert_fallback_rejected \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-implicit-to-array.toml" \
+  "fallback validation must reject implicit parent conversion to an array table"
+
+cat >"$tmp_dir/fallback-declared-table-traversal.toml" <<'EOF'
+[a.b]
+x = 1
+
+[a]
+b.c = 1
+EOF
+assert_fallback_rejected \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-declared-table-traversal.toml" \
+  "fallback validation must reject dotted traversal through a declared table"
+
 cat >"$tmp_dir/fallback-managed-scalar-table.toml" <<'EOF'
 [tui.notifications]
 EOF
@@ -640,5 +682,84 @@ python3 "$tmp_dir/fallback_runner.py" \
   >"$tmp_dir/fallback-valid-second.toml"
 cmp -s "$tmp_dir/fallback-valid-merged.toml" "$tmp_dir/fallback-valid-second.toml" ||
   fail "fallback validation must preserve byte-identical second merges"
+
+printf \
+  '# comment keeps U+2028 \342\200\250 and U+0085 \302\205\nunicode_value = "left\342\200\250middle\302\205right"\n' \
+  >"$tmp_dir/fallback-unicode-data.toml"
+python3 "$tmp_dir/fallback_runner.py" \
+  "$MERGER" \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-unicode-data.toml" \
+  >"$tmp_dir/fallback-unicode-data-merged.toml"
+python3 - "$tmp_dir/fallback-unicode-data-merged.toml" <<'PY'
+from pathlib import Path
+import sys
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+assert "# comment keeps U+2028 \u2028 and U+0085 \u0085" in text
+assert 'unicode_value = "left\u2028middle\u0085right"' in text
+PY
+python3 "$tmp_dir/fallback_runner.py" \
+  "$MERGER" \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-unicode-data-merged.toml" \
+  >"$tmp_dir/fallback-unicode-data-second.toml"
+cmp -s \
+  "$tmp_dir/fallback-unicode-data-merged.toml" \
+  "$tmp_dir/fallback-unicode-data-second.toml" ||
+  fail "fallback validation must preserve Unicode line-like data byte-identically"
+
+cat >"$tmp_dir/fallback-valid-namespace.toml" <<'EOF'
+top.left = 1
+top.right = 2
+
+[parent.child]
+value = true
+
+[parent]
+sibling = "kept"
+EOF
+python3 "$tmp_dir/fallback_runner.py" \
+  "$MERGER" \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-valid-namespace.toml" \
+  >"$tmp_dir/fallback-valid-namespace-merged.toml"
+assert_file_contains "$tmp_dir/fallback-valid-namespace-merged.toml" 'top.left = 1'
+assert_file_contains "$tmp_dir/fallback-valid-namespace-merged.toml" '[parent.child]'
+assert_file_contains "$tmp_dir/fallback-valid-namespace-merged.toml" 'sibling = "kept"'
+
+if python3 -c 'import tomllib' >/dev/null 2>&1; then
+  python3 - \
+    "$MERGER" \
+    "$tmp_dir/fallback-valid-merged.toml" \
+    "$tmp_dir/fallback-unicode-data-merged.toml" \
+    "$tmp_dir/fallback-valid-namespace-merged.toml" \
+    "$tmp_dir/fallback-implicit-to-array.toml" \
+    "$tmp_dir/fallback-declared-table-traversal.toml" <<'PY'
+import importlib.util
+from pathlib import Path
+import sys
+import tomllib
+
+merger_path = sys.argv[1]
+spec = importlib.util.spec_from_file_location("merge_codex_config_differential", merger_path)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+module.tomllib = None
+for path in map(Path, sys.argv[2:5]):
+    text = path.read_text(encoding="utf-8")
+    tomllib.loads(text)
+    module.parse_document(text, "fallback differential fixture")
+for path in map(Path, sys.argv[5:]):
+    text = path.read_text(encoding="utf-8")
+    try:
+        tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        pass
+    else:
+        raise AssertionError(f"tomllib unexpectedly accepted {path}")
+PY
+fi
 
 printf 'Codex server config merge checks passed\n'

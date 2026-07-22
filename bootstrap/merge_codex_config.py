@@ -16,20 +16,20 @@ except ImportError:  # pragma: no cover - structural validation is used below.
 
 
 BARE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
-DECIMAL_INTEGER_RE = re.compile(r"[+-]?(?:0|[1-9](?:_?\d)*)$")
+DECIMAL_INTEGER_RE = re.compile(r"[+-]?(?:0|[1-9](?:_?[0-9])*)$")
 BASE_INTEGER_RE = re.compile(
     r"(?:0x[0-9A-Fa-f](?:_?[0-9A-Fa-f])*|0o[0-7](?:_?[0-7])*|0b[01](?:_?[01])*)$"
 )
 FLOAT_RE = re.compile(
-    r"[+-]?(?:(?:0|[1-9](?:_?\d)*)\.\d(?:_?\d)*"
-    r"(?:[eE][+-]?\d(?:_?\d)*)?"
-    r"|(?:0|[1-9](?:_?\d)*)[eE][+-]?\d(?:_?\d)*|inf|nan)$"
+    r"[+-]?(?:(?:0|[1-9](?:_?[0-9])*)\.[0-9](?:_?[0-9])*"
+    r"(?:[eE][+-]?[0-9](?:_?[0-9])*)?"
+    r"|(?:0|[1-9](?:_?[0-9])*)[eE][+-]?[0-9](?:_?[0-9])*|inf|nan)$"
 )
-LOCAL_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}$")
-LOCAL_TIME_RE = re.compile(r"\d{2}:\d{2}:\d{2}(?:\.\d+)?$")
+LOCAL_DATE_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+LOCAL_TIME_RE = re.compile(r"[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?$")
 DATE_TIME_RE = re.compile(
-    r"\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?"
-    r"(?:Z|[+-]\d{2}:\d{2})?$"
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})?$"
 )
 
 
@@ -94,6 +94,9 @@ def validate_toml(text: str, label: str) -> None:
 def validate_fallback_characters(text: str, label: str) -> None:
     for index, char in enumerate(text):
         codepoint = ord(char)
+        if char == "\r" and (index + 1 == len(text) or text[index + 1] != "\n"):
+            line = text.count("\n", 0, index) + 1
+            raise MergeError(f"malformed {label}: bare carriage return on line {line}")
         forbidden = (
             codepoint <= 0x08
             or codepoint in (0x0B, 0x0C)
@@ -111,17 +114,25 @@ def validate_fallback_characters(text: str, label: str) -> None:
 def strip_line_ending(line: str) -> str:
     if line.endswith("\r\n"):
         return line[:-2]
-    if line.endswith(("\n", "\r")):
+    if line.endswith("\n"):
         return line[:-1]
     return line
+
+
+def split_lf_lines(text: str) -> list[str]:
+    if not text:
+        return []
+    parts = text.split("\n")
+    lines = [f"{part}\n" for part in parts[:-1]]
+    if parts[-1]:
+        lines.append(parts[-1])
+    return lines
 
 
 def newline_style(text: str) -> str:
     for index, char in enumerate(text):
         if char == "\n":
             return "\r\n" if index and text[index - 1] == "\r" else "\n"
-        if char == "\r":
-            return "\r\n" if index + 1 < len(text) and text[index + 1] == "\n" else "\r"
     return "\n"
 
 
@@ -143,7 +154,7 @@ def parse_key_path(expression: str) -> tuple[str, ...]:
         path: list[str] = []
         index = 0
         while index < len(expression):
-            while index < len(expression) and expression[index].isspace():
+            while index < len(expression) and expression[index] in " \t":
                 index += 1
             if index >= len(expression):
                 break
@@ -187,7 +198,7 @@ def parse_key_path(expression: str) -> tuple[str, ...]:
                 if not BARE_KEY_RE.fullmatch(key):
                     raise MergeError(f"unsupported TOML key expression: {expression}")
                 path.append(key)
-            while index < len(expression) and expression[index].isspace():
+            while index < len(expression) and expression[index] in " \t":
                 index += 1
             if index == len(expression):
                 break
@@ -195,7 +206,7 @@ def parse_key_path(expression: str) -> tuple[str, ...]:
                 raise MergeError(f"unsupported TOML key expression: {expression}")
             index += 1
             next_segment = index
-            while next_segment < len(expression) and expression[next_segment].isspace():
+            while next_segment < len(expression) and expression[next_segment] in " \t":
                 next_segment += 1
             if next_segment == len(expression) or expression[next_segment] == ".":
                 raise MergeError(f"empty dotted TOML key segment: {expression}")
@@ -243,7 +254,7 @@ def find_unquoted(text: str, target: str) -> int | None:
 
 
 def parse_header_line(line: str) -> tuple[str, bool] | None:
-    stripped = strip_line_ending(line).lstrip()
+    stripped = strip_line_ending(line).lstrip(" \t")
     if not stripped.startswith("["):
         return None
     is_array = stripped.startswith("[[")
@@ -270,7 +281,7 @@ def parse_header_line(line: str) -> tuple[str, bool] | None:
             if is_array and stripped[index : index + 2] != "]]":
                 index += 1
                 continue
-            rest = stripped[index + closing :].lstrip()
+            rest = stripped[index + closing :].lstrip(" \t")
             if rest and not rest.startswith("#"):
                 raise MergeError(f"unsupported table header line: {stripped}")
             return stripped[opening:index], is_array
@@ -280,7 +291,7 @@ def parse_header_line(line: str) -> tuple[str, bool] | None:
 
 def value_is_complete(rhs: str) -> bool:
     if tomllib is None:
-        value = rhs.lstrip()
+        value = rhs.lstrip(" \t")
         if not value:
             return False
         if value.startswith(('"""', "'''")):
@@ -295,7 +306,7 @@ def value_is_complete(rhs: str) -> bool:
                 elif quote == '"' and char == "\\":
                     escaped = True
                 elif char == quote:
-                    rest = value[index + 1 :].strip()
+                    rest = value[index + 1 :].strip(" \t\r\n")
                     return not rest or rest.startswith("#")
             return False
         if value[0] in "[{":
@@ -331,10 +342,10 @@ def value_is_complete(rhs: str) -> bool:
                     if not stack or stack.pop() != char:
                         return False
                     if not stack:
-                        rest = value[index + 1 :].strip()
+                        rest = value[index + 1 :].strip(" \t\r\n")
                         return not rest or rest.startswith("#")
             return False
-        return bool(value.split("#", 1)[0].strip())
+        return bool(value.split("#", 1)[0].strip(" \t\r\n"))
     try:
         tomllib.loads(f"__codex_merge_value = {rhs}")
     except tomllib.TOMLDecodeError:
@@ -527,7 +538,7 @@ class FallbackValueParser:
             elif char in ('"', "'"):
                 quote = char
             elif char == "=":
-                expression = self.text[start:self.index].strip()
+                expression = self.text[start:self.index].strip(" \t")
                 if not expression:
                     raise self.error("empty inline-table key")
                 return parse_key_path(expression)
@@ -610,6 +621,14 @@ class FallbackNamespace:
         node = self.symbols.get(path)
         if is_array:
             if node is None or node.kind == "implicit":
+                if any(
+                    len(existing) > len(path) and is_prefix(path, existing)
+                    for existing in self.symbols
+                ):
+                    raise self.error(
+                        "array table collides with an implicit table that has descendants",
+                        path,
+                    )
                 self.symbols[path] = NamespaceNode("array")
             elif node.kind != "array":
                 raise self.error("array table collides with an existing symbol", path)
@@ -647,6 +666,12 @@ class FallbackNamespace:
             node = symbols.get(prefix)
             if node and node.kind in ("value", "array"):
                 raise self.error("key parent collides with an existing value", prefix)
+            if node and node.kind in ("table", "implicit") and not is_prefix(
+                prefix, table
+            ):
+                raise self.error(
+                    "dotted key traverses a table outside its current scope", prefix
+                )
             if node is None:
                 kind = "implicit" if is_prefix(prefix, table) else "dotted"
                 symbols[prefix] = NamespaceNode(kind)
@@ -677,7 +702,7 @@ def parse_document(text: str, label: str) -> Document:
     if tomllib is None:
         validate_fallback_characters(text, label)
     validate_toml(text, label)
-    lines = text.splitlines(keepends=True)
+    lines = split_lf_lines(text)
     headers: list[Header] = []
     assignments: list[Assignment] = []
     current_table: tuple[str, ...] = ()
@@ -685,7 +710,7 @@ def parse_document(text: str, label: str) -> Document:
 
     while index < len(lines):
         content = strip_line_ending(lines[index])
-        stripped = content.strip()
+        stripped = content.strip(" \t")
         if not stripped or stripped.startswith("#"):
             index += 1
             continue
@@ -701,7 +726,7 @@ def parse_document(text: str, label: str) -> Document:
         equals = find_unquoted(content, "=")
         if equals is None:
             raise MergeError(f"unsupported {label} line: {content}")
-        key = parse_key_path(content[:equals].strip())
+        key = parse_key_path(content[:equals].strip(" \t"))
         end = index + 1
         rhs = lines[index][equals + 1 :]
         while not value_is_complete(rhs) and end < len(lines):
@@ -719,7 +744,7 @@ def parse_document(text: str, label: str) -> Document:
 
 
 def unsafe_managed_value(assignment: Assignment) -> bool:
-    value = assignment.rhs.lstrip()
+    value = assignment.rhs.lstrip(" \t")
     return assignment.end != assignment.start + 1 or value.startswith(
         ("{", '"""', "'''")
     )
@@ -733,7 +758,7 @@ def parse_fragment(fragment: str) -> tuple[list[ManagedGroup], dict[tuple[str, .
         raise MergeError("array-of-table fragment headers are not safe to merge")
 
     header_lines = {
-        header.path: strip_line_ending(document.lines[header.index]).strip()
+        header.path: strip_line_ending(document.lines[header.index]).strip(" \t")
         for header in document.headers
     }
     if len(header_lines) != len(document.headers):
@@ -870,7 +895,9 @@ def apply_owned_keys(
         if not missing:
             continue
         insertion = section_end(document, group.path)
-        while insertion > 0 and not strip_line_ending(document.lines[insertion - 1]).strip():
+        while insertion > 0 and not strip_line_ending(
+            document.lines[insertion - 1]
+        ).strip(" \t"):
             insertion -= 1
         insertions.setdefault(insertion, []).extend(
             line_for_output(group.assignments[key], newline) for key in missing
@@ -894,9 +921,9 @@ def insert_missing_table(lines: list[str], group: ManagedGroup, newline: str) ->
 
     block = [line_for_output(group.header or "", newline)]
     block.extend(line_for_output(group.assignments[key], newline) for key in group.keys)
-    if insert_at > 0 and strip_line_ending(lines[insert_at - 1]).strip():
+    if insert_at > 0 and strip_line_ending(lines[insert_at - 1]).strip(" \t"):
         block.insert(0, newline)
-    if insert_at < len(lines) and strip_line_ending(lines[insert_at]).strip():
+    if insert_at < len(lines) and strip_line_ending(lines[insert_at]).strip(" \t"):
         block.append(newline)
     return lines[:insert_at] + block + lines[insert_at:]
 
