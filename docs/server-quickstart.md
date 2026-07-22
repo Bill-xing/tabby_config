@@ -334,8 +334,8 @@ nvim --headless \
   set -e -o pipefail
   repo_dir=/path/to/tabby_config
   cd "$repo_dir"
-  git config --global --get user.name
-  git config --global --get user.email
+  test "$(git config --global --get user.name)" = 'Bill-xing'
+  test "$(git config --global --get user.email)" = 'bill.xjm@gmail.com'
   conda --version
   nvitop --version
   btop --version
@@ -355,8 +355,9 @@ nvim --headless \
 )
 ```
 
-前两行应分别输出 `Bill-xing` 和 `bill.xjm@gmail.com`。如果刚安装系统 Docker，请在重新
-登录后检查；如果走 Rootless 分支，确认新 shell 中的 `DOCKER_HOST` 指向用户运行时目录。
+前两行会精确核对 Git 全局身份；任一值不是 `Bill-xing` 或 `bill.xjm@gmail.com` 都会使
+完整验证失败。如果刚安装系统 Docker，请在重新登录后检查；如果走 Rootless 分支，确认
+新 shell 中的 `DOCKER_HOST` 指向用户运行时目录。
 
 上面的 `SKILL.md` 检查只确认 Pretty Mermaid 源码存在。需要渲染时，再执行与安装器一致
 的运行依赖检查：

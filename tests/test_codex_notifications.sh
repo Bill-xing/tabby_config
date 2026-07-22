@@ -179,7 +179,8 @@ printf 'Codex server fragment and merge checks passed\n'
 source "$REPO_ROOT/bootstrap/common.sh"
 
 assert_file_contains "$REPO_ROOT/bootstrap/common.sh" 'install_codex_server_config()'
-assert_file_contains "$REPO_ROOT/bootstrap/common.sh" '  install_codex_server_config'
+assert_file_contains "$REPO_ROOT/bootstrap/common.sh" 'install_codex_notifications()'
+assert_file_contains "$REPO_ROOT/bootstrap/common.sh" '    "$REPO_ROOT/config/codex/tabby-notifications.toml"'
 assert_file_contains "$REPO_ROOT/bootstrap/common.sh" 'cp -p "$target" "$backup"'
 assert_file_contains "$REPO_ROOT/bootstrap/common.sh" 'mv -f "$temp_file" "$target"'
 
@@ -225,6 +226,29 @@ mv() {
   fi
   command mv "$@"
 }
+
+export CODEX_HOME="$tmp_dir/desktop-codex"
+mkdir -p "$CODEX_HOME"
+cat >"$CODEX_HOME/config.toml" <<'EOF'
+model = "desktop-model"
+approval_policy = "never"
+
+[tui]
+status_line = ["model", "current-dir"]
+notifications = false
+EOF
+
+install_codex_notifications
+assert_file_contains "$CODEX_HOME/config.toml" 'model = "desktop-model"'
+assert_file_contains "$CODEX_HOME/config.toml" 'approval_policy = "never"'
+assert_file_contains "$CODEX_HOME/config.toml" 'status_line = ["model", "current-dir"]'
+assert_file_contains \
+  "$CODEX_HOME/config.toml" \
+  'notifications = ["agent-turn-complete", "approval-requested"]'
+assert_file_not_contains "$CODEX_HOME/config.toml" 'model = "gpt-5.6-sol"'
+assert_file_not_contains "$CODEX_HOME/config.toml" '[plugins."figma@openai-curated"]'
+
+unset CODEX_HOME
 
 install_codex_server_config
 target="$HOME/.codex/config.toml"

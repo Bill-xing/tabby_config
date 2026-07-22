@@ -533,12 +533,12 @@ verify_server_bootstrap() {
     warn 'server bootstrap verification failed: Codex is not usable'
     return 1
   fi
-  if ! codex_plugin_installed figma@openai-curated; then
-    warn 'server bootstrap verification failed: figma@openai-curated is not installed'
+  if ! codex_plugin_enabled figma@openai-curated; then
+    warn 'server bootstrap verification failed: figma@openai-curated is not installed and enabled'
     return 1
   fi
-  if ! codex_plugin_installed superpowers@openai-curated; then
-    warn 'server bootstrap verification failed: superpowers@openai-curated is not installed'
+  if ! codex_plugin_enabled superpowers@openai-curated; then
+    warn 'server bootstrap verification failed: superpowers@openai-curated is not installed and enabled'
     return 1
   fi
   target="$(pretty_mermaid_target)" || return 1
@@ -675,7 +675,7 @@ main() {
   status=$?
   [ "$status" -eq 0 ] || return "$status"
   DOTFILES_SKIP_TABBY=1 \
-    DOTFILES_SKIP_CODEX_SERVER_CONFIG=1 \
+    DOTFILES_SKIP_CODEX_NOTIFICATIONS=1 \
     install_config_payload
   status=$?
   [ "$status" -eq 0 ] || return "$status"

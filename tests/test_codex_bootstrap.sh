@@ -229,6 +229,15 @@ PLUGIN_LIST=$'figma@openai-curated installed, enabled\nsuperpowers@openai-curate
 ensure_codex_plugin figma@openai-curated
 ensure_codex_plugin superpowers@openai-curated
 assert_eq 0 "$(plugin_add_count)" 'installed enabled or disabled plugins are reused'
+codex_plugin_enabled figma@openai-curated || fail 'installed, enabled plugin must pass final-state predicate'
+if codex_plugin_enabled superpowers@openai-curated; then
+  fail 'installed, disabled plugin must fail final-state predicate'
+fi
+
+reset_case plugin-list-formats
+PLUGIN_LIST=$'figma@openai-curated installed enabled\nsuperpowers@openai-curated installed, enabled'
+codex_plugin_enabled figma@openai-curated || fail 'installed enabled format must pass final-state predicate'
+codex_plugin_enabled superpowers@openai-curated || fail 'installed, enabled format must pass final-state predicate'
 
 reset_case exact-plugin-selector
 PLUGIN_LIST=$'figma@openai-curated-extra installed, enabled\nsuperpowers@openai-curated not installed'

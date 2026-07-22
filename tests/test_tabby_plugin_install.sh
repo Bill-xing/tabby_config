@@ -371,29 +371,41 @@ install_tabby_config() {
 install_tabby_payload() {
   printf '%s\n' tabby-payload >>"$desktop_calls"
 }
+install_codex_notifications() {
+  printf '%s\n' codex-notifications >>"$desktop_calls"
+}
 install_codex_server_config() {
-  printf '%s\n' codex-config >>"$desktop_calls"
+  printf '%s\n' codex-server-config >>"$desktop_calls"
 }
 
 unset DOTFILES_SKIP_TABBY
-unset DOTFILES_SKIP_CODEX_SERVER_CONFIG
+unset DOTFILES_SKIP_CODEX_NOTIFICATIONS
 install_config_payload
 assert_eq \
-  $'codex-config\ntabby-payload' \
+  $'codex-notifications\ntabby-payload' \
   "$(<"$desktop_calls")" \
-  "desktop config payload default Codex and Tabby dispatch"
+  "desktop config payload installs only Codex notifications and Tabby"
 assert_eq \
   "2" \
   "$(wc -l <"$desktop_calls" | tr -d ' ')" \
   "desktop config payload default call count"
 
 : >"$desktop_calls"
-export DOTFILES_SKIP_CODEX_SERVER_CONFIG=1
+export DOTFILES_SKIP_CODEX_NOTIFICATIONS=1
 install_config_payload
 assert_eq \
   "tabby-payload" \
   "$(<"$desktop_calls")" \
-  "narrow Codex server config skip preserves the rest of the payload"
+  "narrow Codex notification skip preserves the Tabby payload"
+
+: >"$desktop_calls"
+unset DOTFILES_SKIP_CODEX_NOTIFICATIONS
+export DOTFILES_SKIP_TABBY=1
+install_config_payload
+assert_eq \
+  $'codex-notifications\ntabby-payload' \
+  "$(<"$desktop_calls")" \
+  "narrow Tabby skip preserves notifications and routes the skipped Tabby dispatcher"
 
 assert_file_contains "$REPO_ROOT/README.md" 'tabby-osc-notify@1.0.0'
 assert_file_contains "$REPO_ROOT/README.md" '自动安装'

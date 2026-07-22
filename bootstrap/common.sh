@@ -432,22 +432,24 @@ next_codex_config_backup_path() {
   printf '%s\n' "$backup"
 }
 
-install_codex_server_config() {
-  local source_file="$REPO_ROOT/config/codex/server.toml"
+install_codex_config_fragment() {
+  local source_file="$1"
+  local config_name="$2"
+  local success_message="$3"
   local merger="$REPO_ROOT/bootstrap/merge_codex_config.py"
   local codex_home target temp_file backup
 
   if ! have codex; then
-    log "Skipping Codex server config (codex is not installed)"
+    log "Skipping $config_name (codex is not installed)"
     return 0
   fi
   if ! have python3; then
-    warn "Skipping Codex server config (python3 is required to merge config.toml safely)"
+    warn "Skipping $config_name (python3 is required to merge config.toml safely)"
     return 0
   fi
 
   if [ ! -f "$source_file" ]; then
-    warn "missing Codex server config: $source_file"
+    warn "missing $config_name source: $source_file"
     return 1
   fi
   if [ ! -f "$merger" ]; then
@@ -469,7 +471,7 @@ install_codex_server_config() {
   if [ -e "$target" ] || [ -L "$target" ]; then
     if ! python3 "$merger" "$source_file" "$target" >"$temp_file"; then
       rm -f "$temp_file"
-      warn "failed to merge Codex server config into $target"
+      warn "failed to merge $config_name into $target"
       return 1
     fi
     if cmp -s "$temp_file" "$target"; then
@@ -485,16 +487,30 @@ install_codex_server_config() {
     fi
   elif ! python3 "$merger" "$source_file" >"$temp_file"; then
     rm -f "$temp_file"
-    warn "failed to create Codex server config"
+    warn "failed to create $config_name"
     return 1
   fi
 
   if ! mv -f "$temp_file" "$target"; then
     rm -f "$temp_file"
-    warn "failed to atomically publish Codex server config to $target"
+    warn "failed to atomically publish $config_name to $target"
     return 1
   fi
-  log "Installed Codex server config in $target"
+  log "$success_message in $target"
+}
+
+install_codex_notifications() {
+  install_codex_config_fragment \
+    "$REPO_ROOT/config/codex/tabby-notifications.toml" \
+    "Codex notifications" \
+    "Installed Codex OSC 9 notifications"
+}
+
+install_codex_server_config() {
+  install_codex_config_fragment \
+    "$REPO_ROOT/config/codex/server.toml" \
+    "Codex server config" \
+    "Installed Codex server config"
 }
 
 install_tabby_osc_notify() {
@@ -600,10 +616,10 @@ install_config_payload() {
   ensure_base_dirs
   status=$?
   [ "$status" -eq 0 ] || return "$status"
-  if flag_enabled "${DOTFILES_SKIP_CODEX_SERVER_CONFIG:-0}"; then
-    log "Skipping Codex server config (DOTFILES_SKIP_CODEX_SERVER_CONFIG is enabled)"
+  if flag_enabled "${DOTFILES_SKIP_CODEX_NOTIFICATIONS:-0}"; then
+    log "Skipping Codex notifications (DOTFILES_SKIP_CODEX_NOTIFICATIONS is enabled)"
   else
-    install_codex_server_config
+    install_codex_notifications
     status=$?
     [ "$status" -eq 0 ] || return "$status"
   fi

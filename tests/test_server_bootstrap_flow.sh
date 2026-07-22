@@ -117,9 +117,9 @@ install_oh_my_zsh_stack() { record oh-my-zsh; maybe_fail oh-my-zsh; }
 install_tmux_plugins() { record tmux-plugins; maybe_fail tmux-plugins; }
 
 install_config_payload() {
-  record payload "tabby=${DOTFILES_SKIP_TABBY:-} codex=${DOTFILES_SKIP_CODEX_SERVER_CONFIG:-}"
+  record payload "tabby=${DOTFILES_SKIP_TABBY:-} notifications=${DOTFILES_SKIP_CODEX_NOTIFICATIONS:-}"
   [ "${DOTFILES_SKIP_TABBY:-}" = 1 ] || fail 'Tabby skip must be set before config payload'
-  [ "${DOTFILES_SKIP_CODEX_SERVER_CONFIG:-}" = 1 ] || fail 'Codex config skip must be set before config payload'
+  [ "${DOTFILES_SKIP_CODEX_NOTIFICATIONS:-}" = 1 ] || fail 'Codex notification skip must be set before config payload'
   maybe_fail payload
 }
 
@@ -175,7 +175,11 @@ record_codex_npm_action() {
 }
 
 install_codex_server() { record codex; maybe_fail codex; }
-verify_server_bootstrap() { record verify; maybe_fail verify; }
+verify_server_bootstrap() {
+  record verify
+  maybe_fail verify || return 23
+  [ "${MOCK_PLUGINS_ENABLED:-true}" = true ]
+}
 summarize_server_bootstrap() {
   record summary "rootless=${SERVER_ROOTLESS_DOCKER:-false} relogin=${SERVER_DOCKER_NEEDS_RELOGIN:-false} warnings=${SERVER_DOCKER_REUSED_WITH_WARNINGS:-false} npm=${SERVER_CODEX_NPM_ACTION:-unknown}"
   maybe_fail summary
@@ -204,14 +208,15 @@ reset_flow_case() {
   MOCK_RELOGIN=true
   MOCK_DOCKER_WARNINGS=false
   MOCK_NPM_ACTION=installed
+  MOCK_PLUGINS_ENABLED=true
   MOCK_LOCAL_CONDA_USABLE=true
   FAIL_AT=''
   unset SERVER_HAS_SUDO SERVER_DOCKER_BIN SERVER_ROOTLESS_DOCKER
   unset SERVER_DOCKER_NEEDS_RELOGIN SERVER_DOCKER_REUSED_WITH_WARNINGS
-  unset SERVER_CODEX_NPM_ACTION DOTFILES_SKIP_TABBY DOTFILES_SKIP_CODEX_SERVER_CONFIG
+  unset SERVER_CODEX_NPM_ACTION DOTFILES_SKIP_TABBY DOTFILES_SKIP_CODEX_NOTIFICATIONS
 }
 
-expected_prefix=$'validate-linux\nneed|apt-get\nneed|cc\nneed|cmp\nneed|curl\nneed|dpkg-deb\nneed|file\nneed|git\nneed|python3\nneed|tar\nneed|tmux\nneed|unzip\ndetect-proxy\ndetect-sudo\nensure-base\nzsh\ncli\ntree-sitter\nrelease|nvim install_neovim_linux\nrelease|lazygit install_lazygit_linux\nrelease|yazi install_yazi_linux\noh-my-zsh\ntmux-plugins\npayload|tabby=1 codex=1\nssh-handoff\nminiforge\nmonitoring\ndocker\ngit|config --global user.name Bill-xing\ngit|config --global user.email bill.xjm@gmail.com'
+expected_prefix=$'validate-linux\nneed|apt-get\nneed|cc\nneed|cmp\nneed|curl\nneed|dpkg-deb\nneed|file\nneed|git\nneed|python3\nneed|tar\nneed|tmux\nneed|unzip\ndetect-proxy\ndetect-sudo\nensure-base\nzsh\ncli\ntree-sitter\nrelease|nvim install_neovim_linux\nrelease|lazygit install_lazygit_linux\nrelease|yazi install_yazi_linux\noh-my-zsh\ntmux-plugins\npayload|tabby=1 notifications=1\nssh-handoff\nminiforge\nmonitoring\ndocker\ngit|config --global user.name Bill-xing\ngit|config --global user.email bill.xjm@gmail.com'
 expected_full="${expected_prefix}"$'\nshell-env|http://proxy.example:8080 true false\ncodex\nverify\nsummary|rootless=false relogin=true warnings=false npm=installed'
 
 reset_flow_case system-flow
@@ -226,7 +231,7 @@ assert_eq $'true\ntrue' "$(<"$MODULE_SUDO_LOG")" 'monitoring and Docker reuse ca
 assert_eq 1 "$(grep -c '^detect-sudo$' "$EVENT_LOG")" 'sudo is detected exactly once'
 assert_eq 2 "$(grep -c '^git|' "$EVENT_LOG")" 'only two Git mutations occur'
 assert_eq "$expected_full" "$(<"$EVENT_LOG")" 'complete existing and server flow order and argv'
-[ -z "${DOTFILES_SKIP_CODEX_SERVER_CONFIG+x}" ] || fail 'successful payload restores an initially unset Codex skip flag'
+[ -z "${DOTFILES_SKIP_CODEX_NOTIFICATIONS+x}" ] || fail 'successful payload restores an initially unset Codex notification skip flag'
 [ -z "${DOTFILES_SKIP_TABBY+x}" ] || fail 'successful payload restores an initially unset Tabby skip flag'
 
 path_after_first_main="$PATH"
@@ -253,6 +258,16 @@ MOCK_RELOGIN=false
 main 2>&1 >/dev/null || fail 'existing-warning orchestration unexpectedly failed'
 assert_contains "$(<"$EVENT_LOG")" 'summary|rootless=false relogin=false warnings=true npm=installed' 'existing Docker warning state reaches summary'
 
+reset_flow_case disabled-plugin-flow
+MOCK_PLUGINS_ENABLED=false
+if main >/dev/null 2>&1; then
+  fail 'disabled required Codex plugin did not fail final verification'
+fi
+grep -Fx verify "$EVENT_LOG" >/dev/null || fail 'disabled plugin flow did not reach final verification'
+if grep '^summary|' "$EVENT_LOG" >/dev/null; then
+  fail 'disabled required Codex plugin still printed the success summary'
+fi
+
 reset_flow_case credential-proxy
 MOCK_PROXY='http://user:top-secret@proxy.example:8080'
 credential_output="$(main 2>&1)" || fail 'credential-bearing proxy orchestration unexpectedly failed'
@@ -272,13 +287,13 @@ main >/dev/null 2>&1 || fail 'stale local conda orchestration unexpectedly faile
 assert_contains "$(<"$EVENT_LOG")" 'shell-env|http://proxy.example:8080 false false' 'stale local Miniforge executable does not enable shell integration'
 
 reset_flow_case payload-failure-restores-flag
-export DOTFILES_SKIP_CODEX_SERVER_CONFIG=prior-value
+export DOTFILES_SKIP_CODEX_NOTIFICATIONS=prior-value
 export DOTFILES_SKIP_TABBY=prior-tabby-value
 FAIL_AT=payload
 if main >/dev/null 2>&1; then
   fail 'payload failure did not propagate'
 fi
-assert_eq prior-value "$DOTFILES_SKIP_CODEX_SERVER_CONFIG" 'payload failure restores the caller Codex skip flag'
+assert_eq prior-value "$DOTFILES_SKIP_CODEX_NOTIFICATIONS" 'payload failure restores the caller Codex notification skip flag'
 assert_eq prior-tabby-value "$DOTFILES_SKIP_TABBY" 'payload failure restores the caller Tabby skip flag'
 
 for failure in miniforge monitoring docker git-name git-email shell-env codex verify; do
@@ -371,9 +386,9 @@ if grep -Fx ssh-handoff "$EVENT_LOG" >/dev/null || grep -Fx summary "$EVENT_LOG"
   fail 'nested config failure did not stop later bootstrap modules'
 fi
 install_config_payload() {
-  record payload "tabby=${DOTFILES_SKIP_TABBY:-} codex=${DOTFILES_SKIP_CODEX_SERVER_CONFIG:-}"
+  record payload "tabby=${DOTFILES_SKIP_TABBY:-} notifications=${DOTFILES_SKIP_CODEX_NOTIFICATIONS:-}"
   [ "${DOTFILES_SKIP_TABBY:-}" = 1 ] || fail 'Tabby skip must be set before config payload'
-  [ "${DOTFILES_SKIP_CODEX_SERVER_CONFIG:-}" = 1 ] || fail 'Codex config skip must be set before config payload'
+  [ "${DOTFILES_SKIP_CODEX_NOTIFICATIONS:-}" = 1 ] || fail 'Codex notification skip must be set before config payload'
   maybe_fail payload
 }
 
@@ -629,7 +644,7 @@ server_docker_version() {
   [ "$verify_docker" = true ] && printf '%s\n' 'Docker version fixture'
 }
 codex_usable() { [ "$verify_codex" = true ]; }
-codex_plugin_installed() {
+codex_plugin_enabled() {
   printf '%s\n' "$1" >>"$PLUGIN_VERIFY_LOG"
   [ "$verify_plugins" = true ]
 }

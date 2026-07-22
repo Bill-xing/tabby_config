@@ -82,6 +82,25 @@ codex_plugin_installed() {
     '
 }
 
+codex_plugin_enabled() {
+  local selector="$1"
+  local listing status
+
+  listing="$(codex_cli plugin list)" || {
+    status=$?
+    return "$status"
+  }
+
+  printf '%s\n' "$listing" |
+    awk -v selector="$selector" '
+      $1 == selector && ($2 == "installed" || $2 == "installed,") && \
+          $3 == "enabled" {
+        found = 1
+      }
+      END { exit(found ? 0 : 1) }
+    '
+}
+
 ensure_codex_plugin() {
   local selector="$1"
   local status
