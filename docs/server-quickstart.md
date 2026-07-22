@@ -5,7 +5,12 @@
 对应分支为 `server`，推荐入口为：
 
 ```bash
-./install/ubuntu-user.sh
+(
+  set -e -o pipefail
+  repo_dir=/path/to/tabby_config
+  cd "$repo_dir"
+  ./install/ubuntu-user.sh
+)
 ```
 
 本文所有 `repo_dir=/path/to/tabby_config` 都是公开占位符，执行前必须替换为当前服务器上的
@@ -298,7 +303,12 @@ nvim --headless \
 强制重装命令：
 
 ```bash
-DOTFILES_FORCE_INSTALL=1 ./install/ubuntu-user.sh
+(
+  set -e -o pipefail
+  repo_dir=/path/to/tabby_config
+  cd "$repo_dir"
+  DOTFILES_FORCE_INSTALL=1 ./install/ubuntu-user.sh
+)
 ```
 
 注意：强制模式会把第三方插件目录 checkout 到锁定 commit。不要在 `~/.oh-my-zsh` 或 `~/.tmux/plugins` 中保存未提交的个人修改。
@@ -306,7 +316,12 @@ DOTFILES_FORCE_INSTALL=1 ./install/ubuntu-user.sh
 如果不希望安装器向 `~/.bashrc` 添加 SSH Zsh 切换块：
 
 ```bash
-DOTFILES_SKIP_SSH_ZSH_HANDOFF=1 ./install/ubuntu-user.sh
+(
+  set -e -o pipefail
+  repo_dir=/path/to/tabby_config
+  cd "$repo_dir"
+  DOTFILES_SKIP_SSH_ZSH_HANDOFF=1 ./install/ubuntu-user.sh
+)
 ```
 
 ## 安装后的完整验证
@@ -491,7 +506,12 @@ ssh your-server 'printf "non-interactive shell: %s\n" "$BASH_VERSION"'
 不要继续尝试密码，直接使用同一个入口：
 
 ```bash
-./install/ubuntu-user.sh
+(
+  set -e -o pipefail
+  repo_dir=/path/to/tabby_config
+  cd "$repo_dir"
+  ./install/ubuntu-user.sh
+)
 ```
 
 sudo 探测失败后，入口会把监控工具安装到独立 Conda 环境，并选择 Rootless Docker；它
@@ -537,7 +557,12 @@ token 只存在于子 shell 中；无论安装成功或失败，返回当前 she
 重新执行普通安装器。损坏的本地二进制无法通过 `--version` 检查时会被自动替换：
 
 ```bash
-./install/ubuntu-user.sh
+(
+  set -e -o pipefail
+  repo_dir=/path/to/tabby_config
+  cd "$repo_dir"
+  ./install/ubuntu-user.sh
+)
 ```
 
 Yazi 与常用 Rust CLI 使用 `musl` Release；Tree-sitter CLI 在本机编译，因此不应依赖高于服务器版本的 GLIBC。
