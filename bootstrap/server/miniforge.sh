@@ -1,9 +1,18 @@
 #!/usr/bin/env bash
 
-conda_bin() {
-  local candidate
+conda_discovery() {
+  command -v conda
+}
 
-  candidate="$(command -v conda 2>/dev/null || true)"
+conda_bin() {
+  local candidate command_type
+
+  candidate="$(conda_discovery 2>/dev/null || true)"
+  command_type="$(type -t conda 2>/dev/null || true)"
+  if [ "$candidate" = conda ] && [ "$command_type" = function ]; then
+    printf '%s\n' conda
+    return 0
+  fi
   case "$candidate" in
     /*|./*|../*)
       if [ -x "$candidate" ]; then
@@ -39,7 +48,8 @@ _miniforge_configure_conda() {
 }
 
 install_miniforge() {
-  local current_conda home_conda arch asset url tmp_dir installer checksum_file expected_sha actual_sha
+  local current_conda='' home_conda arch asset url tmp_dir installer checksum_file expected_sha actual_sha
+  local -a installer_args
 
   home_conda="$HOME/miniforge3/bin/conda"
   if current_conda="$(conda_bin)" && _miniforge_conda_works "$current_conda"; then
@@ -68,46 +78,60 @@ install_miniforge() {
   esac
 
   url="https://github.com/conda-forge/miniforge/releases/latest/download/${asset}"
-  if ! tmp_dir="$(mktemp -d)"; then
-    warn 'failed to create a temporary directory for Miniforge installation'
-    return 1
-  fi
-  trap 'rm -rf "$tmp_dir"; trap - RETURN' RETURN
+  (
+    if ! tmp_dir="$(mktemp -d)"; then
+      warn 'failed to create a temporary directory for Miniforge installation'
+      exit 1
+    fi
+    trap 'rm -rf "$tmp_dir"' EXIT
 
-  installer="$tmp_dir/$asset"
-  checksum_file="$installer.sha256"
-  log "Downloading Miniforge from $url"
-  if ! fetch_url "$url" "$installer"; then
-    warn "failed to download Miniforge installer: $url"
-    return 1
-  fi
-  if ! fetch_url "${url}.sha256" "$checksum_file"; then
-    warn "failed to download Miniforge checksum: ${url}.sha256"
-    return 1
-  fi
+    installer="$tmp_dir/$asset"
+    checksum_file="$installer.sha256"
+    log "Downloading Miniforge from $url"
+    if ! fetch_url "$url" "$installer"; then
+      warn "failed to download Miniforge installer: $url"
+      exit 1
+    fi
+    if ! fetch_url "${url}.sha256" "$checksum_file"; then
+      warn "failed to download Miniforge checksum: ${url}.sha256"
+      exit 1
+    fi
 
-  expected_sha="$(awk 'NF { print $1; exit }' "$checksum_file")"
-  if ! [[ "$expected_sha" =~ ^[[:xdigit:]]{64}$ ]]; then
-    warn "malformed Miniforge SHA-256 checksum: $checksum_file"
-    return 1
-  fi
-  if ! actual_sha="$(sha256_file "$installer")"; then
-    warn "failed to calculate Miniforge SHA-256 checksum: $installer"
-    return 1
-  fi
-  if [ "${actual_sha,,}" != "${expected_sha,,}" ]; then
-    warn 'Miniforge installer SHA-256 checksum mismatch; refusing to execute it'
-    return 1
-  fi
+    expected_sha="$(awk 'NF { print $1; exit }' "$checksum_file")"
+    if ! [[ "$expected_sha" =~ ^[[:xdigit:]]{64}$ ]]; then
+      warn "malformed Miniforge SHA-256 checksum: $checksum_file"
+      exit 1
+    fi
+    if ! actual_sha="$(sha256_file "$installer")"; then
+      warn "failed to calculate Miniforge SHA-256 checksum: $installer"
+      exit 1
+    fi
+    if [ "${actual_sha,,}" != "${expected_sha,,}" ]; then
+      warn 'Miniforge installer SHA-256 checksum mismatch; refusing to execute it'
+      exit 1
+    fi
 
-  if ! run_miniforge_installer "$installer" -b -p "$HOME/miniforge3"; then
-    warn 'Miniforge installer failed'
-    return 1
-  fi
-  if [ ! -x "$home_conda" ] || ! _miniforge_conda_works "$home_conda"; then
-    warn "Miniforge installation did not produce a usable conda executable: $home_conda"
-    return 1
-  fi
+    installer_args=("$installer" -b)
+    if [ -f "$HOME/miniforge3/conda-meta/history" ]; then
+      installer_args+=(-u)
+    elif [ -e "$HOME/miniforge3" ] || [ -L "$HOME/miniforge3" ]; then
+      log "Backing up unrecognized Miniforge prefix: $HOME/miniforge3"
+      if ! backup_existing "$HOME/miniforge3"; then
+        warn "failed to back up unrecognized Miniforge prefix: $HOME/miniforge3"
+        exit 1
+      fi
+    fi
+    installer_args+=(-p "$HOME/miniforge3")
 
-  _miniforge_configure_conda "$home_conda"
+    if ! run_miniforge_installer "${installer_args[@]}"; then
+      warn 'Miniforge installer failed'
+      exit 1
+    fi
+    if [ ! -x "$home_conda" ] || ! _miniforge_conda_works "$home_conda"; then
+      warn "Miniforge installation did not produce a usable conda executable: $home_conda"
+      exit 1
+    fi
+
+    _miniforge_configure_conda "$home_conda"
+  )
 }
