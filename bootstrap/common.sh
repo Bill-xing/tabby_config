@@ -72,13 +72,15 @@ run_root() {
 
 backup_existing() {
   local target="$1"
-  local stamp backup suffix
+  local stamp backup suffix status
 
   if [ ! -e "$target" ] && [ ! -L "$target" ]; then
     return 0
   fi
 
   stamp="$(date +%Y%m%d%H%M%S)"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   backup="${target}.bak.${stamp}"
   suffix=1
   while [ -e "$backup" ] || [ -L "$backup" ]; do
@@ -98,14 +100,23 @@ upsert_managed_block() {
   local original_directory write_target directory temporary line mode in_block=0 inserted=0
 
   original_directory="$(dirname "$target")"
-  mkdir -p "$original_directory"
+  if ! mkdir -p "$original_directory"; then
+    warn "cannot create managed block target directory: $original_directory"
+    return 1
+  fi
   write_target="$(_tabby_resolve_symlink_target "$target")" || {
     warn "cannot resolve managed block target: $target"
     return 1
   }
   directory="$(dirname "$write_target")"
-  mkdir -p "$directory"
-  temporary="$(mktemp "$directory/.${name}.XXXXXX")"
+  if ! mkdir -p "$directory"; then
+    warn "cannot create managed block write directory: $directory"
+    return 1
+  fi
+  temporary="$(mktemp "$directory/.${name}.XXXXXX")" || {
+    warn "cannot create temporary managed block file beside: $write_target"
+    return 1
+  }
 
   if [ -f "$write_target" ]; then
     while IFS= read -r line || [ -n "$line" ]; do
@@ -116,7 +127,11 @@ upsert_managed_block() {
           return 1
         fi
         if [ "$inserted" -eq 0 ]; then
-          printf '%s\n%s\n%s\n' "$start" "$content" "$end" >>"$temporary"
+          if ! printf '%s\n%s\n%s\n' "$start" "$content" "$end" >>"$temporary"; then
+            rm -f "$temporary"
+            warn "cannot write managed block temporary file: $temporary"
+            return 1
+          fi
           inserted=1
         fi
         in_block=1
@@ -129,7 +144,11 @@ upsert_managed_block() {
         rm -f "$temporary"
         return 1
       else
-        printf '%s\n' "$line" >>"$temporary"
+        if ! printf '%s\n' "$line" >>"$temporary"; then
+          rm -f "$temporary"
+          warn "cannot write managed block temporary file: $temporary"
+          return 1
+        fi
       fi
     done <"$write_target"
   fi
@@ -141,8 +160,16 @@ upsert_managed_block() {
   fi
 
   if [ "$inserted" -eq 0 ]; then
-    [ ! -s "$temporary" ] || printf '\n' >>"$temporary"
-    printf '%s\n%s\n%s\n' "$start" "$content" "$end" >>"$temporary"
+    if [ -s "$temporary" ] && ! printf '\n' >>"$temporary"; then
+      rm -f "$temporary"
+      warn "cannot write managed block temporary file: $temporary"
+      return 1
+    fi
+    if ! printf '%s\n%s\n%s\n' "$start" "$content" "$end" >>"$temporary"; then
+      rm -f "$temporary"
+      warn "cannot write managed block temporary file: $temporary"
+      return 1
+    fi
   fi
 
   if [ -e "$write_target" ]; then
@@ -190,9 +217,11 @@ _tabby_file_mode() {
 link_or_copy() {
   local src="$1"
   local dst="$2"
-  local mode="${DOTFILES_LINK_MODE:-auto}"
+  local mode="${DOTFILES_LINK_MODE:-auto}" status
 
   mkdir -p "$(dirname "$dst")"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
 
   if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then
     return 0
@@ -208,6 +237,8 @@ link_or_copy() {
 
   if [ -e "$dst" ] || [ -L "$dst" ]; then
     backup_existing "$dst"
+    status=$?
+    [ "$status" -eq 0 ] || return "$status"
   fi
 
   case "$mode" in
@@ -635,7 +666,7 @@ clone_repo_at_ref() {
   local repo_url="$1"
   local ref="$2"
   local target_dir="$3"
-  local current_ref
+  local current_ref status
 
   if [ -d "$target_dir/.git" ]; then
     current_ref="$(git -C "$target_dir" rev-parse HEAD 2>/dev/null || true)"
@@ -644,19 +675,29 @@ clone_repo_at_ref() {
       return 0
     fi
     git -C "$target_dir" remote set-url origin "$repo_url"
+    status=$?
+    [ "$status" -eq 0 ] || return "$status"
   else
     if [ -e "$target_dir" ]; then
       die "plugin target exists but is not a git repository: $target_dir"
     fi
     mkdir -p "$(dirname "$target_dir")"
+    status=$?
+    [ "$status" -eq 0 ] || return "$status"
     git init -q "$target_dir"
+    status=$?
+    [ "$status" -eq 0 ] || return "$status"
     git -C "$target_dir" remote add origin "$repo_url"
+    status=$?
+    [ "$status" -eq 0 ] || return "$status"
   fi
 
   log "Fetching pinned checkout: $target_dir"
   if ! git -C "$target_dir" fetch --depth 1 origin "$ref"; then
     warn "Shallow fetch failed for $repo_url; retrying with tags"
     git -C "$target_dir" fetch --tags --force origin
+    status=$?
+    [ "$status" -eq 0 ] || return "$status"
   fi
   git -C "$target_dir" checkout --force --detach "$ref"
 }
@@ -733,9 +774,11 @@ linux_arch() {
 }
 
 install_neovim_linux() {
-  local arch asset url tmp_dir extracted
+  local arch asset url tmp_dir extracted status
 
   arch="$(linux_arch)"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   case "$arch" in
     x86_64) asset="nvim-linux-x86_64.tar.gz" ;;
     arm64) asset="nvim-linux-arm64.tar.gz" ;;
@@ -743,60 +786,96 @@ install_neovim_linux() {
 
   url="https://github.com/neovim/neovim/releases/latest/download/${asset}"
   tmp_dir="$(mktemp -d)"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   trap 'rm -rf "$tmp_dir"; trap - RETURN' RETURN
 
   log "Installing Neovim from $url"
   fetch_url "$url" "$tmp_dir/$asset"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   tar -xzf "$tmp_dir/$asset" -C "$tmp_dir"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   extracted="$(find "$tmp_dir" -maxdepth 1 -type d -name 'nvim-*' | head -n 1)"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   [ -n "$extracted" ] || die "failed to unpack Neovim archive"
 
   rm -rf "$HOME/.local/opt/nvim"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   mv "$extracted" "$HOME/.local/opt/nvim"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   ln -sf "$HOME/.local/opt/nvim/bin/nvim" "$HOME/.local/bin/nvim"
 }
 
 install_lazygit_linux() {
-  local arch pattern url tmp_dir asset_name
+  local arch pattern url tmp_dir asset_name status
 
   arch="$(linux_arch)"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   case "$arch" in
     x86_64) pattern='[Ll]inux_x86_64\.tar\.gz$' ;;
     arm64) pattern='[Ll]inux_arm64\.tar\.gz$' ;;
   esac
 
   url="$(github_latest_asset_url 'jesseduffield/lazygit' "$pattern")"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   tmp_dir="$(mktemp -d)"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   trap 'rm -rf "$tmp_dir"; trap - RETURN' RETURN
   asset_name="$(basename "$url")"
 
   log "Installing Lazygit from $url"
   fetch_url "$url" "$tmp_dir/$asset_name"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   tar -xzf "$tmp_dir/$asset_name" -C "$tmp_dir"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   install -m 0755 "$tmp_dir/lazygit" "$HOME/.local/bin/lazygit"
 }
 
 install_yazi_linux() {
-  local arch pattern url tmp_dir asset_name unpacked
+  local arch pattern url tmp_dir asset_name unpacked status
 
   arch="$(linux_arch)"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   case "$arch" in
     x86_64) pattern='x86_64-unknown-linux-musl\.zip$' ;;
     arm64) pattern='aarch64-unknown-linux-musl\.zip$' ;;
   esac
 
   url="$(github_latest_asset_url 'sxyazi/yazi' "$pattern")"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   tmp_dir="$(mktemp -d)"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   trap 'rm -rf "$tmp_dir"; trap - RETURN' RETURN
   asset_name="$(basename "$url")"
 
   log "Installing Yazi from $url"
   fetch_url "$url" "$tmp_dir/$asset_name"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   unzip -q "$tmp_dir/$asset_name" -d "$tmp_dir"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   unpacked="$(find "$tmp_dir" -maxdepth 1 -type d -name 'yazi-*' | head -n 1)"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   [ -n "$unpacked" ] || die "failed to unpack Yazi archive"
 
   install -m 0755 "$unpacked/yazi" "$HOME/.local/bin/yazi"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   install -m 0755 "$unpacked/ya" "$HOME/.local/bin/ya"
 }
 

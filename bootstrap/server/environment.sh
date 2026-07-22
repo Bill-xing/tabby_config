@@ -131,12 +131,21 @@ EOF
 _tabby_write_atomic() {
   local target="$1"
   local content="$2"
-  local directory temporary
+  local directory temporary status
 
   directory="$(dirname "$target")"
   mkdir -p "$directory"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   temporary="$(mktemp "$directory/.${target##*/}.XXXXXX")"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   printf '%s\n' "$content" >"$temporary"
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    rm -f "$temporary" || true
+    return "$status"
+  fi
   mv "$temporary" "$target"
 }
 
@@ -185,21 +194,37 @@ write_server_shell_environment() {
   local proxy_url="$1"
   local conda_enabled="$2"
   local rootless_enabled="$3"
-  local environment_dir endpoint host port aliases server_environment source_block common_path
+  local environment_dir endpoint host port aliases server_environment source_block common_path status
 
-  endpoint="$(_tabby_proxy_endpoint "$proxy_url")" || return 1
+  endpoint="$(_tabby_proxy_endpoint "$proxy_url")"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   IFS=$'\t' read -r host port <<<"$endpoint"
-  aliases="$(render_proxy_aliases "$host" "$port")" || return 1
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  aliases="$(render_proxy_aliases "$host" "$port")"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
 
   environment_dir="${XDG_CONFIG_HOME:-$HOME/.config}/tabby-config"
   _tabby_write_atomic "$environment_dir/proxy-aliases.sh" "$aliases"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   server_environment="$(_tabby_server_environment_content "$conda_enabled" "$rootless_enabled")"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   _tabby_write_atomic "$environment_dir/server-env.sh" "$server_environment"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
 
   if ! declare -F upsert_managed_block >/dev/null 2>&1; then
     common_path="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/common.sh"
+    status=$?
+    [ "$status" -eq 0 ] || return "$status"
     # shellcheck source=bootstrap/common.sh
     source "$common_path"
+    status=$?
+    [ "$status" -eq 0 ] || return "$status"
   fi
   source_block='[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/tabby-config/server-env.sh" ] && . "${XDG_CONFIG_HOME:-$HOME/.config}/tabby-config/server-env.sh"'
   upsert_managed_block "$HOME/.bashrc" server-environment "$source_block"

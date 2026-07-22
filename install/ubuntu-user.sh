@@ -44,7 +44,7 @@ local_user_tool_usable() {
 }
 
 install_user_local_zsh() {
-  local tmp_dir target deb
+  local tmp_dir target deb status
 
   target="$HOME/.local/opt/zsh"
   if ! force_install \
@@ -52,12 +52,18 @@ install_user_local_zsh() {
     && "$target/root/bin/zsh" --version >/dev/null 2>&1; then
     log "Reusing user-local zsh"
     mkdir -p "$target/startup" "$HOME/.local/bin"
+    status=$?
+    [ "$status" -eq 0 ] || return "$status"
     install -m 0755 "$REPO_ROOT/bootstrap/user-local-zsh" "$HOME/.local/bin/zsh"
+    status=$?
+    [ "$status" -eq 0 ] || return "$status"
     install -m 0644 "$REPO_ROOT/bootstrap/user-local-zshenv" "$target/startup/.zshenv"
     return 0
   fi
 
   tmp_dir="$(mktemp -d)"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
 
   log "Downloading Ubuntu zsh packages without root privileges"
   if ! (
@@ -69,17 +75,50 @@ install_user_local_zsh() {
   ); then
     warn "Direct package download failed; retrying with the current proxy environment"
     (cd "$tmp_dir" && apt-get download zsh zsh-common)
+    status=$?
+    if [ "$status" -ne 0 ]; then
+      rm -rf "$tmp_dir" || true
+      return "$status"
+    fi
   fi
 
   rm -rf "$target"
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    rm -rf "$tmp_dir" || true
+    return "$status"
+  fi
   mkdir -p "$target/root" "$target/startup" "$HOME/.local/bin"
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    rm -rf "$tmp_dir" || true
+    return "$status"
+  fi
   for deb in "$tmp_dir"/*.deb; do
     dpkg-deb -x "$deb" "$target/root"
+    status=$?
+    if [ "$status" -ne 0 ]; then
+      rm -rf "$tmp_dir" || true
+      return "$status"
+    fi
   done
 
-  [ -x "$target/root/bin/zsh" ] || die "failed to extract the zsh binary"
+  if [ ! -x "$target/root/bin/zsh" ]; then
+    rm -rf "$tmp_dir" || true
+    die "failed to extract the zsh binary"
+  fi
   install -m 0755 "$REPO_ROOT/bootstrap/user-local-zsh" "$HOME/.local/bin/zsh"
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    rm -rf "$tmp_dir" || true
+    return "$status"
+  fi
   install -m 0644 "$REPO_ROOT/bootstrap/user-local-zshenv" "$target/startup/.zshenv"
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    rm -rf "$tmp_dir" || true
+    return "$status"
+  fi
   rm -rf "$tmp_dir"
 }
 
@@ -87,7 +126,7 @@ install_github_archive_binary() {
   local repo="$1"
   local pattern="$2"
   local binary="$3"
-  local url tmp_dir asset_name binary_path
+  local url tmp_dir asset_name binary_path status
 
   if ! force_install && local_user_tool_usable "$binary"; then
     log "Reusing user-local $binary"
@@ -95,20 +134,46 @@ install_github_archive_binary() {
   fi
 
   url="$(github_latest_asset_url "$repo" "$pattern")"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   tmp_dir="$(mktemp -d)"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   asset_name="$(basename "$url")"
 
   log "Installing $binary from $url"
   fetch_url "$url" "$tmp_dir/$asset_name"
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    rm -rf "$tmp_dir" || true
+    return "$status"
+  fi
   case "$asset_name" in
     *.tar.gz) tar -xzf "$tmp_dir/$asset_name" -C "$tmp_dir" ;;
     *.zip) unzip -q "$tmp_dir/$asset_name" -d "$tmp_dir" ;;
     *) die "unsupported archive for $binary: $asset_name" ;;
   esac
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    rm -rf "$tmp_dir" || true
+    return "$status"
+  fi
 
   binary_path="$(find "$tmp_dir" -type f -name "$binary" | head -n 1)"
-  [ -n "$binary_path" ] || die "failed to find $binary in $asset_name"
+  status=$?
+  if [ "$status" -ne 0 ] || [ -z "$binary_path" ]; then
+    rm -rf "$tmp_dir" || true
+    if [ "$status" -ne 0 ]; then
+      return "$status"
+    fi
+    die "failed to find $binary in $asset_name"
+  fi
   install -m 0755 "$binary_path" "$HOME/.local/bin/$binary"
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    rm -rf "$tmp_dir" || true
+    return "$status"
+  fi
   rm -rf "$tmp_dir"
 }
 
@@ -116,7 +181,7 @@ install_github_binary() {
   local repo="$1"
   local pattern="$2"
   local binary="$3"
-  local url tmp_dir
+  local url tmp_dir status
 
   if ! force_install && local_user_tool_usable "$binary"; then
     log "Reusing user-local $binary"
@@ -124,11 +189,25 @@ install_github_binary() {
   fi
 
   url="$(github_latest_asset_url "$repo" "$pattern")"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   tmp_dir="$(mktemp -d)"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
 
   log "Installing $binary from $url"
   fetch_url "$url" "$tmp_dir/$binary"
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    rm -rf "$tmp_dir" || true
+    return "$status"
+  fi
   install -m 0755 "$tmp_dir/$binary" "$HOME/.local/bin/$binary"
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    rm -rf "$tmp_dir" || true
+    return "$status"
+  fi
   rm -rf "$tmp_dir"
 }
 
@@ -201,7 +280,7 @@ tree_sitter_cli_usable() {
 }
 
 install_user_tree_sitter_cli() {
-  local arch rust_target tmp_dir cargo_bin
+  local arch rust_target tmp_dir cargo_bin status
   local -a cargo_force
 
   if ! force_install && have tree-sitter && tree_sitter_cli_usable; then
@@ -210,6 +289,8 @@ install_user_tree_sitter_cli() {
   fi
 
   arch="$(linux_arch)"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   case "$arch" in
     x86_64) rust_target="x86_64-unknown-linux-gnu" ;;
     arm64) rust_target="aarch64-unknown-linux-gnu" ;;
@@ -219,13 +300,32 @@ install_user_tree_sitter_cli() {
     cargo_bin="$(command -v cargo)"
   else
     tmp_dir="$(mktemp -d)"
+    status=$?
+    [ "$status" -eq 0 ] || return "$status"
     log "Installing a minimal Rust toolchain for tree-sitter CLI"
     fetch_url \
       "https://static.rust-lang.org/rustup/dist/${rust_target}/rustup-init" \
       "$tmp_dir/rustup-init"
+    status=$?
+    if [ "$status" -ne 0 ]; then
+      rm -rf "$tmp_dir" || true
+      return "$status"
+    fi
     chmod 0755 "$tmp_dir/rustup-init"
+    status=$?
+    if [ "$status" -ne 0 ]; then
+      rm -rf "$tmp_dir" || true
+      return "$status"
+    fi
     "$tmp_dir/rustup-init" -y --profile minimal --no-modify-path
+    status=$?
+    if [ "$status" -ne 0 ]; then
+      rm -rf "$tmp_dir" || true
+      return "$status"
+    fi
     rm -rf "$tmp_dir"
+    status=$?
+    [ "$status" -eq 0 ] || return "$status"
     cargo_bin="$HOME/.cargo/bin/cargo"
   fi
 
@@ -241,6 +341,8 @@ install_user_tree_sitter_cli() {
     --no-default-features \
     "${cargo_force[@]}" \
     --root "$HOME/.local/opt/tree-sitter-cli"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   install -m 0755 \
     "$HOME/.local/opt/tree-sitter-cli/bin/tree-sitter" \
     "$HOME/.local/bin/tree-sitter"
@@ -259,7 +361,7 @@ install_user_release_tool() {
 
 install_ssh_zsh_handoff() {
   local bashrc="$HOME/.bashrc"
-  local marker="# >>> tabby_config user-local zsh >>>"
+  local marker="# >>> tabby_config user-local zsh >>>" status
 
   if flag_enabled "${DOTFILES_SKIP_SSH_ZSH_HANDOFF:-0}"; then
     log "Skipping interactive SSH zsh handoff"
@@ -267,6 +369,8 @@ install_ssh_zsh_handoff() {
   fi
 
   touch "$bashrc"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   if grep -Fq "$marker" "$bashrc"; then
     log "Reusing existing interactive SSH zsh handoff"
     return 0
@@ -283,6 +387,8 @@ if [ -n "${SSH_CONNECTION:-}" ] && [ -t 0 ] && [ -t 1 ] \
 fi
 # <<< tabby_config user-local zsh <<<
 EOF
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
 }
 
 server_git() {

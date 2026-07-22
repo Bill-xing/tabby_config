@@ -68,6 +68,12 @@ eval "$(declare -f install_user_cli_stack | sed '1s/install_user_cli_stack/insta
 eval "$(declare -f install_config_payload | sed '1s/install_config_payload/install_config_payload_real/')"
 eval "$(declare -f install_oh_my_zsh_stack | sed '1s/install_oh_my_zsh_stack/install_oh_my_zsh_stack_real/')"
 eval "$(declare -f install_tmux_plugins | sed '1s/install_tmux_plugins/install_tmux_plugins_real/')"
+eval "$(declare -f install_github_archive_binary | sed '1s/install_github_archive_binary/install_github_archive_binary_real/')"
+eval "$(declare -f install_github_binary | sed '1s/install_github_binary/install_github_binary_real/')"
+eval "$(declare -f install_user_local_zsh | sed '1s/install_user_local_zsh/install_user_local_zsh_real/')"
+eval "$(declare -f install_user_tree_sitter_cli | sed '1s/install_user_tree_sitter_cli/install_user_tree_sitter_cli_real/')"
+eval "$(declare -f clone_repo_at_ref | sed '1s/clone_repo_at_ref/clone_repo_at_ref_real/')"
+eval "$(declare -f write_server_shell_environment | sed '1s/write_server_shell_environment/write_server_shell_environment_real/')"
 
 record() {
   printf '%s' "$1" >>"$EVENT_LOG"
@@ -393,6 +399,138 @@ if grep -F 'payload|' "$EVENT_LOG" >/dev/null || grep -Fx summary "$EVENT_LOG" >
   fail 'tmux clone failure did not stop later bootstrap modules'
 fi
 install_tmux_plugins() { record tmux-plugins; maybe_fail tmux-plugins; }
+
+reset_flow_case real-archive-fetch-failure
+archive_fixture="$tmp_root/fzf-fixture.tar.gz"
+archive_root="$tmp_root/fzf-fixture-root"
+mkdir -p "$archive_root"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$archive_root/fzf"
+chmod +x "$archive_root/fzf"
+tar -czf "$archive_fixture" -C "$archive_root" fzf
+github_latest_asset_url() { printf '%s\n' 'https://fixture.invalid/fzf.tar.gz'; }
+fetch_url() {
+  cp "$archive_fixture" "$2"
+  return 41
+}
+install_github_archive_binary() {
+  if [ "$3" = fzf ]; then
+    install_github_archive_binary_real "$@"
+  else
+    record archive-child "$3"
+  fi
+}
+install_github_binary() { record binary-child "$3"; }
+install_user_cli_stack() { install_user_cli_stack_real; }
+if main >/dev/null 2>&1; then
+  fail 'real archive fetch failure was masked by extraction and cleanup success'
+fi
+if grep -Fx 'archive-child|fd' "$EVENT_LOG" >/dev/null || grep -Fx summary "$EVENT_LOG" >/dev/null; then
+  fail 'real archive fetch failure did not stop later bootstrap work'
+fi
+
+reset_flow_case real-binary-fetch-failure
+github_latest_asset_url() { printf '%s\n' 'https://fixture.invalid/tool'; }
+fetch_url() {
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$2"
+  return 42
+}
+install_github_archive_binary() { record archive-child "$3"; }
+install_github_binary() {
+  if [ "$3" = direnv ]; then
+    install_github_binary_real "$@"
+  else
+    record binary-child "$3"
+  fi
+}
+if main >/dev/null 2>&1; then
+  fail 'real binary fetch failure was masked by install and cleanup success'
+fi
+if grep -Fx 'binary-child|jq' "$EVENT_LOG" >/dev/null || grep -Fx summary "$EVENT_LOG" >/dev/null; then
+  fail 'real binary fetch failure did not stop later bootstrap work'
+fi
+install_user_cli_stack() { record cli; maybe_fail cli; }
+
+reset_flow_case real-zsh-mkdir-failure
+mkdir -p "$HOME/.local/opt/zsh/root/bin"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$HOME/.local/opt/zsh/root/bin/zsh"
+chmod +x "$HOME/.local/opt/zsh/root/bin/zsh"
+mkdir() {
+  command mkdir "$@"
+  case "$*" in *"$HOME/.local/opt/zsh/startup"*) return 43 ;; esac
+}
+install_user_local_zsh() { install_user_local_zsh_real; }
+if main >/dev/null 2>&1; then
+  fail 'real local Zsh mkdir failure was masked by later install success'
+fi
+if grep -Fx cli "$EVENT_LOG" >/dev/null || grep -Fx summary "$EVENT_LOG" >/dev/null; then
+  fail 'real local Zsh failure did not stop later bootstrap work'
+fi
+unset -f mkdir
+install_user_local_zsh() { record zsh; maybe_fail zsh; }
+
+reset_flow_case real-tree-sitter-cargo-failure
+cargo_fixture_dir="$tmp_root/cargo-fixture-bin"
+mkdir -p "$cargo_fixture_dir"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'mkdir -p "$HOME/.local/opt/tree-sitter-cli/bin"' \
+  'printf "#!/usr/bin/env bash\nexit 0\n" >"$HOME/.local/opt/tree-sitter-cli/bin/tree-sitter"' \
+  'chmod +x "$HOME/.local/opt/tree-sitter-cli/bin/tree-sitter"' \
+  'exit 44' >"$cargo_fixture_dir/cargo"
+chmod +x "$cargo_fixture_dir/cargo"
+PATH="$cargo_fixture_dir:$PATH"
+export PATH
+install_user_tree_sitter_cli() { install_user_tree_sitter_cli_real; }
+if main >/dev/null 2>&1; then
+  fail 'real tree-sitter Cargo failure was masked by later install success'
+fi
+if grep -F 'release|' "$EVENT_LOG" >/dev/null || grep -Fx summary "$EVENT_LOG" >/dev/null; then
+  fail 'real tree-sitter failure did not stop later bootstrap work'
+fi
+install_user_tree_sitter_cli() { record tree-sitter; maybe_fail tree-sitter; }
+
+reset_flow_case real-clone-remote-failure
+mkdir -p "$HOME/.oh-my-zsh/.git"
+GIT_LEAF_LOG="$tmp_root/real-clone-git.log"
+: >"$GIT_LEAF_LOG"
+git() {
+  printf '%s\n' "$*" >>"$GIT_LEAF_LOG"
+  case "$*" in
+    *'rev-parse HEAD'*) printf '%s\n' wrong-ref ;;
+    *'remote set-url'*) return 45 ;;
+    *) return 0 ;;
+  esac
+}
+clone_repo_at_ref() { clone_repo_at_ref_real "$@"; }
+install_oh_my_zsh_stack() { install_oh_my_zsh_stack_real; }
+if main >/dev/null 2>&1; then
+  fail 'real clone remote failure was masked by fetch and checkout success'
+fi
+grep -F 'remote set-url' "$GIT_LEAF_LOG" >/dev/null || fail 'real clone regression did not reach remote update'
+if grep -F "$POWERLEVEL10K_REPO" "$GIT_LEAF_LOG" >/dev/null || grep -Fx summary "$EVENT_LOG" >/dev/null; then
+  fail 'real clone failure did not stop later plugin or bootstrap work'
+fi
+unset -f git
+install_oh_my_zsh_stack() { record oh-my-zsh; maybe_fail oh-my-zsh; }
+
+reset_flow_case real-shell-environment-write-failure
+shell_write_count=0
+_tabby_write_atomic() {
+  shell_write_count=$((shell_write_count + 1))
+  [ "$shell_write_count" -ne 1 ]
+}
+upsert_managed_block() { return 0; }
+write_server_shell_environment() { write_server_shell_environment_real "$@"; }
+if main >/dev/null 2>&1; then
+  fail 'real shell environment write failure was masked by later writes'
+fi
+if grep -Fx codex "$EVENT_LOG" >/dev/null || grep -Fx summary "$EVENT_LOG" >/dev/null; then
+  fail 'real shell environment failure did not stop Codex or summary'
+fi
+write_server_shell_environment() {
+  record shell-env "$1 $2 $3"
+  maybe_fail shell-env
+}
 
 # Exercise the real read-only final verifier through replaceable host predicates.
 verify_git_name='Bill-xing'
