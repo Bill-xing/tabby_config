@@ -133,7 +133,7 @@ install_github_binary() {
 }
 
 install_user_cli_stack() {
-  local arch
+  local arch status
   local fzf_pattern fd_pattern rg_pattern bat_pattern delta_pattern eza_pattern zoxide_pattern
   local direnv_pattern jq_pattern
 
@@ -164,13 +164,29 @@ install_user_cli_stack() {
   esac
 
   install_github_archive_binary junegunn/fzf "$fzf_pattern" fzf
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   install_github_archive_binary sharkdp/fd "$fd_pattern" fd
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   install_github_archive_binary BurntSushi/ripgrep "$rg_pattern" rg
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   install_github_archive_binary sharkdp/bat "$bat_pattern" bat
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   install_github_archive_binary dandavison/delta "$delta_pattern" delta
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   install_github_archive_binary eza-community/eza "$eza_pattern" eza
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   install_github_archive_binary ajeetdsouza/zoxide "$zoxide_pattern" zoxide
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   install_github_binary direnv/direnv "$direnv_pattern" direnv
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   install_github_binary jqlang/jq "$jq_pattern" jq
 }
 
@@ -274,8 +290,24 @@ server_git() {
 }
 
 configure_server_git_identity() {
-  server_git config --global user.name Bill-xing || return 1
+  local status
+
+  server_git config --global user.name Bill-xing
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   server_git config --global user.email bill.xjm@gmail.com
+}
+
+prepend_server_user_paths() {
+  local directory
+
+  for directory in "$HOME/.cargo/bin" "$HOME/.local/bin"; do
+    case ":$PATH:" in
+      *":$directory:"*) ;;
+      *) PATH="$directory:$PATH" ;;
+    esac
+  done
+  export PATH
 }
 
 server_conda_usable() {
@@ -449,22 +481,46 @@ summarize_server_bootstrap() {
 }
 
 main() {
-  local proxy_candidate conda_enabled=false
+  local proxy_candidate conda_enabled=false status
 
   is_linux || die "install/ubuntu-user.sh must be run on Linux"
-  need_cmd apt-get || return 1
-  need_cmd cc || return 1
-  need_cmd cmp || return 1
-  need_cmd curl || return 1
-  need_cmd dpkg-deb || return 1
-  need_cmd file || return 1
-  need_cmd git || return 1
-  need_cmd python3 || return 1
-  need_cmd tar || return 1
-  need_cmd tmux || return 1
-  need_cmd unzip || return 1
+  need_cmd apt-get
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  need_cmd cc
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  need_cmd cmp
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  need_cmd curl
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  need_cmd dpkg-deb
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  need_cmd file
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  need_cmd git
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  need_cmd python3
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  need_cmd tar
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  need_cmd tmux
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  need_cmd unzip
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
 
-  proxy_candidate="$(detect_proxy_candidate)" || return 1
+  proxy_candidate="$(detect_proxy_candidate)"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   if sudo_available; then
     SERVER_HAS_SUDO=true
   else
@@ -472,31 +528,63 @@ main() {
   fi
   export SERVER_HAS_SUDO
 
-  export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
-  ensure_base_dirs || return 1
-  install_user_local_zsh || return 1
-  install_user_cli_stack || return 1
-  install_user_tree_sitter_cli || return 1
-  install_user_release_tool nvim install_neovim_linux || return 1
-  install_user_release_tool lazygit install_lazygit_linux || return 1
-  install_user_release_tool yazi install_yazi_linux || return 1
+  prepend_server_user_paths
+  ensure_base_dirs
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  install_user_local_zsh
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  install_user_cli_stack
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  install_user_tree_sitter_cli
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  install_user_release_tool nvim install_neovim_linux
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  install_user_release_tool lazygit install_lazygit_linux
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  install_user_release_tool yazi install_yazi_linux
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
 
   if [ -f "$HOME/.zshrc" ] && [ ! -L "$HOME/.zshrc" ] && [ ! -e "$HOME/.zshrc.local" ]; then
     log "Preserving the existing machine-specific zsh config as ~/.zshrc.local"
-    cp "$HOME/.zshrc" "$HOME/.zshrc.local" || return 1
+    cp "$HOME/.zshrc" "$HOME/.zshrc.local"
+    status=$?
+    [ "$status" -eq 0 ] || return "$status"
   fi
 
-  install_oh_my_zsh_stack || return 1
-  install_tmux_plugins || return 1
+  install_oh_my_zsh_stack
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  install_tmux_plugins
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   DOTFILES_SKIP_TABBY=1 \
     DOTFILES_SKIP_CODEX_SERVER_CONFIG=1 \
-    install_config_payload || return 1
-  install_ssh_zsh_handoff || return 1
+    install_config_payload
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  install_ssh_zsh_handoff
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
 
-  install_miniforge || return 1
-  install_monitoring_tools || return 1
-  install_docker || return 1
-  configure_server_git_identity || return 1
+  install_miniforge
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  install_monitoring_tools
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  install_docker
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  configure_server_git_identity
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   if [ -x "$HOME/miniforge3/bin/conda" ] &&
     server_conda_usable "$HOME/miniforge3/bin/conda"; then
     conda_enabled=true
@@ -504,10 +592,18 @@ main() {
   write_server_shell_environment \
     "$proxy_candidate" \
     "$conda_enabled" \
-    "${SERVER_ROOTLESS_DOCKER:-false}" || return 1
-  record_codex_npm_action || return 1
-  install_codex_server || return 1
-  verify_server_bootstrap || return 1
+    "${SERVER_ROOTLESS_DOCKER:-false}"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  record_codex_npm_action
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  install_codex_server
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  verify_server_bootstrap
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   summarize_server_bootstrap
 }
 

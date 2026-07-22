@@ -563,29 +563,51 @@ install_tabby_payload() {
 }
 
 install_config_payload() {
-  local cfg
+  local cfg status
   cfg="$(config_home)"
 
   ensure_base_dirs
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   if flag_enabled "${DOTFILES_SKIP_CODEX_SERVER_CONFIG:-0}"; then
     log "Skipping Codex server config (DOTFILES_SKIP_CODEX_SERVER_CONFIG is enabled)"
   else
     install_codex_server_config
+    status=$?
+    [ "$status" -eq 0 ] || return "$status"
   fi
   link_or_copy "$REPO_ROOT/config/zsh/.zshrc" "$HOME/.zshrc"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   link_or_copy "$REPO_ROOT/config/zsh/.p10k.zsh" "$HOME/.p10k.zsh"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   link_or_copy "$REPO_ROOT/config/tmux/.tmux.conf" "$HOME/.tmux.conf"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   link_or_copy "$REPO_ROOT/config/tmux-powerline" "$cfg/tmux-powerline"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   install_tabby_payload
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   link_or_copy "$REPO_ROOT/config/nvim" "$cfg/nvim"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   link_or_copy "$REPO_ROOT/config/yazi" "$cfg/yazi"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
 
   if [ -f "$REPO_ROOT/config/lazygit/config.yml" ]; then
     link_or_copy "$REPO_ROOT/config/lazygit" "$cfg/lazygit"
+    status=$?
+    [ "$status" -eq 0 ] || return "$status"
   fi
 
   if is_windows; then
     install_windows_mirrors
+    status=$?
+    [ "$status" -eq 0 ] || return "$status"
   fi
 }
 

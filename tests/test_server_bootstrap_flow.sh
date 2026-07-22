@@ -64,6 +64,8 @@ declare -F main >/dev/null || fail 'sourcing ubuntu-user defines main'
 
 eval "$(declare -f verify_server_bootstrap | sed '1s/verify_server_bootstrap/verify_server_bootstrap_real/')"
 eval "$(declare -f summarize_server_bootstrap | sed '1s/summarize_server_bootstrap/summarize_server_bootstrap_real/')"
+eval "$(declare -f install_user_cli_stack | sed '1s/install_user_cli_stack/install_user_cli_stack_real/')"
+eval "$(declare -f install_config_payload | sed '1s/install_config_payload/install_config_payload_real/')"
 
 record() {
   printf '%s' "$1" >>"$EVENT_LOG"
@@ -219,8 +221,10 @@ assert_eq "$expected_full" "$(<"$EVENT_LOG")" 'complete existing and server flow
 [ -z "${DOTFILES_SKIP_CODEX_SERVER_CONFIG+x}" ] || fail 'successful payload restores an initially unset Codex skip flag'
 [ -z "${DOTFILES_SKIP_TABBY+x}" ] || fail 'successful payload restores an initially unset Tabby skip flag'
 
+path_after_first_main="$PATH"
 main 2>&1 >/dev/null || fail 'second orchestration run unexpectedly failed'
 assert_eq 1 "$(grep -c '^# managed server environment$' "$SHELL_FIXTURE")" 'two runs do not duplicate managed shell config'
+assert_eq "$path_after_first_main" "$PATH" 'two main calls leave PATH byte-identical'
 
 reset_flow_case rootless-flow
 MOCK_SUDO=false
@@ -289,6 +293,60 @@ for failure in miniforge monitoring docker git-name git-email shell-env codex ve
     fail "$failure failure did not short-circuit before $later"
   fi
 done
+
+# A nested child failure must not be hidden by later successful siblings.
+reset_flow_case nested-cli-failure
+linux_arch() { printf '%s\n' x86_64; }
+install_github_archive_binary() {
+  record cli-child "$3"
+  [ "$3" != fd ]
+}
+install_github_binary() {
+  record cli-child "$3"
+}
+install_user_cli_stack() {
+  install_user_cli_stack_real
+}
+if main >/dev/null 2>&1; then
+  fail 'fd installer failure was masked by later CLI installer success'
+fi
+grep -Fx 'cli-child|fd' "$EVENT_LOG" >/dev/null || fail 'nested CLI regression did not reach fd'
+if grep -Fx 'cli-child|rg' "$EVENT_LOG" >/dev/null; then
+  fail 'nested CLI failure did not stop before the next child installer'
+fi
+if grep -Fx tree-sitter "$EVENT_LOG" >/dev/null || grep -Fx summary "$EVENT_LOG" >/dev/null; then
+  fail 'nested CLI failure did not stop later bootstrap modules'
+fi
+install_user_cli_stack() { record cli; maybe_fail cli; }
+
+reset_flow_case nested-config-failure
+ensure_base_dirs() { record ensure-base; maybe_fail ensure-base; }
+link_or_copy() {
+  record config-link "$1 $2"
+  case "$1" in */config/zsh/.p10k.zsh) return 29 ;; esac
+}
+install_tabby_payload() { record config-tabby; }
+is_windows() { return 1; }
+install_config_payload() {
+  install_config_payload_real
+}
+if main >/dev/null 2>&1; then
+  fail 'config link failure was masked by later payload success'
+fi
+grep -F 'config-link|' "$EVENT_LOG" | grep -F '.p10k.zsh' >/dev/null ||
+  fail 'nested config regression did not reach the failing p10k link'
+if grep -F 'config-link|' "$EVENT_LOG" | grep -F '.tmux.conf' >/dev/null; then
+  fail 'nested config failure did not stop before the next link'
+fi
+if grep -Fx ssh-handoff "$EVENT_LOG" >/dev/null || grep -Fx summary "$EVENT_LOG" >/dev/null; then
+  fail 'nested config failure did not stop later bootstrap modules'
+fi
+install_config_payload() {
+  record payload "tabby=${DOTFILES_SKIP_TABBY:-} codex=${DOTFILES_SKIP_CODEX_SERVER_CONFIG:-}"
+  [ "${DOTFILES_SKIP_TABBY:-}" = 1 ] || fail 'Tabby skip must be set before config payload'
+  [ "${DOTFILES_SKIP_CODEX_SERVER_CONFIG:-}" = 1 ] || fail 'Codex config skip must be set before config payload'
+  maybe_fail payload
+}
 
 # Exercise the real read-only final verifier through replaceable host predicates.
 verify_git_name='Bill-xing'
