@@ -662,20 +662,40 @@ clone_repo_at_ref() {
 }
 
 install_oh_my_zsh_stack() {
+  local status
+
   log "Installing pinned oh-my-zsh stack"
   clone_repo_at_ref "$OH_MY_ZSH_REPO" "$OH_MY_ZSH_REF" "$HOME/.oh-my-zsh"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   clone_repo_at_ref "$POWERLEVEL10K_REPO" "$POWERLEVEL10K_REF" "$HOME/.oh-my-zsh/custom/themes/powerlevel10k"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   clone_repo_at_ref "$ZSH_AUTOSUGGESTIONS_REPO" "$ZSH_AUTOSUGGESTIONS_REF" "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   clone_repo_at_ref "$ZSH_SYNTAX_HIGHLIGHTING_REPO" "$ZSH_SYNTAX_HIGHLIGHTING_REF" "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
 }
 
 install_tmux_plugins() {
+  local status
+
   log "Installing pinned tmux plugins"
   clone_repo_at_ref "$TPM_REPO" "$TPM_REF" "$HOME/.tmux/plugins/tpm"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   clone_repo_at_ref "$TMUX_SENSIBLE_REPO" "$TMUX_SENSIBLE_REF" "$HOME/.tmux/plugins/tmux-sensible"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   clone_repo_at_ref "$TMUX_YANK_REPO" "$TMUX_YANK_REF" "$HOME/.tmux/plugins/tmux-yank"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   clone_repo_at_ref "$TMUX_RESURRECT_REPO" "$TMUX_RESURRECT_REF" "$HOME/.tmux/plugins/tmux-resurrect"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   clone_repo_at_ref "$TMUX_CONTINUUM_REPO" "$TMUX_CONTINUUM_REF" "$HOME/.tmux/plugins/tmux-continuum"
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
   clone_repo_at_ref "$TMUX_POWERLINE_REPO" "$TMUX_POWERLINE_REF" "$HOME/.tmux/plugins/tmux-powerline"
 }
 

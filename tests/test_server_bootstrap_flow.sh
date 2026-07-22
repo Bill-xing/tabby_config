@@ -66,6 +66,8 @@ eval "$(declare -f verify_server_bootstrap | sed '1s/verify_server_bootstrap/ver
 eval "$(declare -f summarize_server_bootstrap | sed '1s/summarize_server_bootstrap/summarize_server_bootstrap_real/')"
 eval "$(declare -f install_user_cli_stack | sed '1s/install_user_cli_stack/install_user_cli_stack_real/')"
 eval "$(declare -f install_config_payload | sed '1s/install_config_payload/install_config_payload_real/')"
+eval "$(declare -f install_oh_my_zsh_stack | sed '1s/install_oh_my_zsh_stack/install_oh_my_zsh_stack_real/')"
+eval "$(declare -f install_tmux_plugins | sed '1s/install_tmux_plugins/install_tmux_plugins_real/')"
 
 record() {
   printf '%s' "$1" >>"$EVENT_LOG"
@@ -347,6 +349,50 @@ install_config_payload() {
   [ "${DOTFILES_SKIP_CODEX_SERVER_CONFIG:-}" = 1 ] || fail 'Codex config skip must be set before config payload'
   maybe_fail payload
 }
+
+reset_flow_case nested-oh-my-zsh-clone-failure
+FAIL_CLONE_REPO="$POWERLEVEL10K_REPO"
+clone_repo_at_ref() {
+  record clone "$1"
+  [ "$1" != "$FAIL_CLONE_REPO" ]
+}
+install_oh_my_zsh_stack() {
+  install_oh_my_zsh_stack_real
+}
+if main >/dev/null 2>&1; then
+  fail 'middle Oh My Zsh clone failure was masked by later clone success'
+fi
+grep -Fx "clone|$POWERLEVEL10K_REPO" "$EVENT_LOG" >/dev/null ||
+  fail 'Oh My Zsh regression did not reach the failing clone'
+if grep -Fx "clone|$ZSH_AUTOSUGGESTIONS_REPO" "$EVENT_LOG" >/dev/null; then
+  fail 'Oh My Zsh clone failure did not stop the next clone'
+fi
+if grep -Fx tmux-plugins "$EVENT_LOG" >/dev/null || grep -Fx summary "$EVENT_LOG" >/dev/null; then
+  fail 'Oh My Zsh clone failure did not stop later bootstrap modules'
+fi
+install_oh_my_zsh_stack() { record oh-my-zsh; maybe_fail oh-my-zsh; }
+
+reset_flow_case nested-tmux-clone-failure
+FAIL_CLONE_REPO="$TMUX_YANK_REPO"
+clone_repo_at_ref() {
+  record clone "$1"
+  [ "$1" != "$FAIL_CLONE_REPO" ]
+}
+install_tmux_plugins() {
+  install_tmux_plugins_real
+}
+if main >/dev/null 2>&1; then
+  fail 'middle tmux plugin clone failure was masked by later clone success'
+fi
+grep -Fx "clone|$TMUX_YANK_REPO" "$EVENT_LOG" >/dev/null ||
+  fail 'tmux regression did not reach the failing clone'
+if grep -Fx "clone|$TMUX_RESURRECT_REPO" "$EVENT_LOG" >/dev/null; then
+  fail 'tmux clone failure did not stop the next clone'
+fi
+if grep -F 'payload|' "$EVENT_LOG" >/dev/null || grep -Fx summary "$EVENT_LOG" >/dev/null; then
+  fail 'tmux clone failure did not stop later bootstrap modules'
+fi
+install_tmux_plugins() { record tmux-plugins; maybe_fail tmux-plugins; }
 
 # Exercise the real read-only final verifier through replaceable host predicates.
 verify_git_name='Bill-xing'
