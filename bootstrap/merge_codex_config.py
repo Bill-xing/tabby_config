@@ -177,6 +177,11 @@ def parse_key_path(expression: str) -> tuple[str, ...]:
             if expression[index] != ".":
                 raise MergeError(f"unsupported TOML key expression: {expression}")
             index += 1
+            next_segment = index
+            while next_segment < len(expression) and expression[next_segment].isspace():
+                next_segment += 1
+            if next_segment == len(expression) or expression[next_segment] == ".":
+                raise MergeError(f"empty dotted TOML key segment: {expression}")
         if not path:
             raise MergeError("empty TOML key expression")
         return tuple(path)

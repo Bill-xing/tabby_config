@@ -502,6 +502,22 @@ assert_fallback_rejected \
   "$tmp_dir/fallback-broken-key.toml" \
   "fallback validation must reject broken keys"
 
+for invalid_key in 'custom.' '.custom' 'custom..child'; do
+  printf '%s = true\n' "$invalid_key" >"$tmp_dir/fallback-invalid-dotted-key.toml"
+  assert_fallback_rejected \
+    "$FRAGMENT" \
+    "$tmp_dir/fallback-invalid-dotted-key.toml" \
+    "fallback validation must reject invalid dotted assignment key: $invalid_key"
+done
+
+for invalid_header in 'custom.' '.custom' 'custom..child'; do
+  printf '[%s]\n' "$invalid_header" >"$tmp_dir/fallback-invalid-dotted-header.toml"
+  assert_fallback_rejected \
+    "$FRAGMENT" \
+    "$tmp_dir/fallback-invalid-dotted-header.toml" \
+    "fallback validation must reject invalid dotted table header: $invalid_header"
+done
+
 printf 'custom_value true\n' >"$tmp_dir/fallback-missing-equals.toml"
 assert_fallback_rejected \
   "$FRAGMENT" \
