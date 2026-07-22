@@ -31,6 +31,8 @@ _dotfiles_source_if_exists() {
   [ -f "$1" ] && source "$1"
 }
 
+_dotfiles_source_if_exists "${XDG_CONFIG_HOME:-$HOME/.config}/tabby-config/server-env.sh"
+
 if [[ -o interactive && -t 0 && -t 1 ]] && command -v direnv >/dev/null 2>&1; then
   emulate zsh -c "$(direnv export zsh)"
 fi
@@ -157,8 +159,6 @@ if [ -f /usr/local/opt/fzf/shell/key-bindings.zsh ]; then
   source /usr/local/opt/fzf/shell/key-bindings.zsh
 fi
 
-alias proxyon='export http_proxy="http://127.0.0.1:10808"; export https_proxy="http://127.0.0.1:10808"; export all_proxy="socks5://127.0.0.1:10808"; echo "proxy enabled on :10808"'
-alias proxyoff='unset http_proxy; unset https_proxy; unset all_proxy; echo "proxy disabled"'
 alias checkip='curl -L ip.gs'
 
 if command -v eza >/dev/null 2>&1; then

@@ -89,6 +89,58 @@ backup_existing() {
   mv "$target" "$backup"
 }
 
+upsert_managed_block() {
+  local target="$1"
+  local name="$2"
+  local content="$3"
+  local start="# >>> tabby_config ${name} >>>"
+  local end="# <<< tabby_config ${name} <<<"
+  local directory temporary line in_block=0 inserted=0
+
+  directory="$(dirname "$target")"
+  mkdir -p "$directory"
+  temporary="$(mktemp "$directory/.${name}.XXXXXX")"
+
+  if [ -f "$target" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      if [ "$line" = "$start" ]; then
+        if [ "$in_block" -eq 1 ]; then
+          rm -f "$temporary"
+          return 1
+        fi
+        if [ "$inserted" -eq 0 ]; then
+          printf '%s\n%s\n%s\n' "$start" "$content" "$end" >>"$temporary"
+          inserted=1
+        fi
+        in_block=1
+      elif [ "$in_block" -eq 1 ]; then
+        if [ "$line" = "$end" ]; then
+          in_block=0
+        fi
+      else
+        printf '%s\n' "$line" >>"$temporary"
+      fi
+    done <"$target"
+  fi
+
+  if [ "$in_block" -eq 1 ]; then
+    rm -f "$temporary"
+    return 1
+  fi
+
+  if [ "$inserted" -eq 0 ]; then
+    [ ! -s "$temporary" ] || printf '\n' >>"$temporary"
+    printf '%s\n%s\n%s\n' "$start" "$content" "$end" >>"$temporary"
+  fi
+
+  if [ -L "$target" ]; then
+    cat "$temporary" >"$target"
+    rm -f "$temporary"
+  else
+    mv "$temporary" "$target"
+  fi
+}
+
 link_or_copy() {
   local src="$1"
   local dst="$2"
