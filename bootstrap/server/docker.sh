@@ -225,21 +225,23 @@ _docker_rootless_socket() {
 }
 
 _docker_existing_is_rootless() {
-  local docker="$1" security_options context_host rootless_socket
+  local docker="$1" context_host rootless_socket selected_endpoint
 
-  security_options="$(
-    docker_execute "$docker" info --format '{{json .SecurityOptions}}' 2>/dev/null || true
-  )"
+  # SecurityOptions describes the daemon, not how this client reaches it. Probe
+  # it for diagnostics, but never use it alone to publish a local DOCKER_HOST.
+  docker_execute "$docker" info --format '{{json .SecurityOptions}}' >/dev/null 2>&1 || true
   context_host="$(
     docker_execute "$docker" context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true
   )"
   rootless_socket="$(_docker_rootless_socket 2>/dev/null || true)"
 
-  case "$security_options" in
-    *name=rootless*|*'"rootless"'*) return 0 ;;
-  esac
   [ -n "$rootless_socket" ] || return 1
-  [ "${DOCKER_HOST:-}" = "$rootless_socket" ] || [ "$context_host" = "$rootless_socket" ]
+  if [ -n "${DOCKER_HOST:-}" ]; then
+    selected_endpoint="$DOCKER_HOST"
+  else
+    selected_endpoint="$context_host"
+  fi
+  [ "$selected_endpoint" = "$rootless_socket" ]
 }
 
 _docker_probe_existing() {

@@ -649,9 +649,35 @@ for rootless_signal in security context environment; do
     environment) DOCKER_HOST='unix:///run/user/1000/docker.sock'; export DOCKER_HOST ;;
   esac
   install_docker >/dev/null
-  assert_eq true "$SERVER_ROOTLESS_DOCKER" "existing rootless $rootless_signal signal is detected"
-  assert_eq 'unix:///run/user/1000/docker.sock' "$DOCKER_HOST" "existing rootless $rootless_signal signal selects the user socket"
+  if [ "$rootless_signal" = security ]; then
+    assert_eq false "$SERVER_ROOTLESS_DOCKER" 'rootless daemon metadata alone does not select local rootless integration'
+    [ -z "${DOCKER_HOST+x}" ] || fail 'rootless daemon metadata alone must not write DOCKER_HOST'
+  else
+    assert_eq true "$SERVER_ROOTLESS_DOCKER" "existing rootless $rootless_signal signal is detected"
+    assert_eq 'unix:///run/user/1000/docker.sock' "$DOCKER_HOST" "existing rootless $rootless_signal signal selects the user socket"
+  fi
   assert_eq "$MOCK_DOCKER" "$SERVER_DOCKER_BIN" "existing rootless $rootless_signal signal retains the selected binary"
+done
+
+for unmanaged_endpoint in remote-ssh custom-unix env-overrides-context; do
+  reset_case "existing-rootless-$unmanaged_endpoint"
+  DOCKER_AVAILABLE=true
+  COMPOSE_STATUS=0
+  BUILDX_STATUS=0
+  SECURITY_OPTIONS='["name=rootless"]'
+  case "$unmanaged_endpoint" in
+    remote-ssh) CONTEXT_HOST='ssh://docker.example' ;;
+    custom-unix) CONTEXT_HOST='unix:///tmp/custom-docker.sock' ;;
+    env-overrides-context)
+      CONTEXT_HOST='unix:///run/user/1000/docker.sock'
+      DOCKER_HOST='ssh://docker.example'
+      export DOCKER_HOST
+      ;;
+  esac
+  original_endpoint="${DOCKER_HOST-__unset__}"
+  install_docker >/dev/null
+  assert_eq false "$SERVER_ROOTLESS_DOCKER" "$unmanaged_endpoint is not persisted as local rootless integration"
+  assert_eq "$original_endpoint" "${DOCKER_HOST-__unset__}" "$unmanaged_endpoint is not rewritten"
 done
 
 for missing_capability in compose buildx info; do
