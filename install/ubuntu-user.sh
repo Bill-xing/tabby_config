@@ -58,6 +58,8 @@ install_user_local_zsh() {
     status=$?
     [ "$status" -eq 0 ] || return "$status"
     install -m 0644 "$REPO_ROOT/bootstrap/user-local-zshenv" "$target/startup/.zshenv"
+    status=$?
+    [ "$status" -eq 0 ] || return "$status"
     return 0
   fi
 

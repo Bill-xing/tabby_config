@@ -468,6 +468,24 @@ fi
 unset -f mkdir
 install_user_local_zsh() { record zsh; maybe_fail zsh; }
 
+reset_flow_case real-zsh-zshenv-install-failure
+mkdir -p "$HOME/.local/opt/zsh/root/bin"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$HOME/.local/opt/zsh/root/bin/zsh"
+chmod +x "$HOME/.local/opt/zsh/root/bin/zsh"
+install() {
+  command install "$@"
+  case "$*" in *'user-local-zshenv'*) return 47 ;; esac
+}
+install_user_local_zsh() { install_user_local_zsh_real; }
+if main >/dev/null 2>&1; then
+  fail 'real local Zsh .zshenv install failure was masked by an unconditional success return'
+fi
+if grep -Fx cli "$EVENT_LOG" >/dev/null || grep -Fx summary "$EVENT_LOG" >/dev/null; then
+  fail 'real local Zsh .zshenv install failure did not stop later bootstrap work'
+fi
+unset -f install
+install_user_local_zsh() { record zsh; maybe_fail zsh; }
+
 reset_flow_case real-tree-sitter-cargo-failure
 cargo_fixture_dir="$tmp_root/cargo-fixture-bin"
 mkdir -p "$cargo_fixture_dir"
