@@ -36,6 +36,9 @@ def main() -> None:
     except ValueError:
         fail()
 
+    if parsed.netloc.endswith(":"):
+        fail()
+
     if not host or not HOST_PATTERN.fullmatch(host):
         fail()
 

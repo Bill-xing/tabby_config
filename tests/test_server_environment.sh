@@ -142,6 +142,12 @@ assert_eq $'proxy.example\t8080' \
 assert_eq $'proxy.example\t8080' \
   "$(python3 "$REPO_ROOT/bootstrap/proxy_endpoint.py" '  proxy.example:8080  ')" \
   'proxy endpoint trims surrounding whitespace'
+assert_eq $'proxy.example\t80' \
+  "$(python3 "$REPO_ROOT/bootstrap/proxy_endpoint.py" 'http://proxy.example')" \
+  'proxy endpoint uses the HTTP default port when no delimiter is present'
+if python3 "$REPO_ROOT/bootstrap/proxy_endpoint.py" 'http://proxy.example:' >/dev/null 2>&1; then
+  fail 'proxy endpoint rejects an explicitly empty port delimiter'
+fi
 if python3 "$REPO_ROOT/bootstrap/proxy_endpoint.py" 'http://proxy.example:99999' >/dev/null 2>&1; then
   fail 'proxy endpoint rejects out-of-range ports'
 fi
