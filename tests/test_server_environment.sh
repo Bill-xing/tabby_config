@@ -60,6 +60,11 @@ source "$REPO_ROOT/bootstrap/common.sh"
 # shellcheck source=bootstrap/server/environment.sh
 source "$REPO_ROOT/bootstrap/server/environment.sh"
 
+nested_bashrc="$HOME/missing/nested/.bashrc"
+upsert_managed_block "$nested_bashrc" server-environment 'nested managed content'
+[ -f "$nested_bashrc" ] || fail 'managed block creates nested target parents'
+assert_eq 1 "$(grep -Fc '# >>> tabby_config server-environment >>>' "$nested_bashrc")" 'nested target has one managed block'
+
 broken_bashrc="$tmp_dir/broken-bashrc"
 printf '%s\n' \
   '# unrelated setting' \
@@ -144,6 +149,16 @@ clear_proxy_environment() {
 
 clear_proxy_environment
 proxy_variables=(http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY)
+clear_proxy_environment
+for candidate_index in "${!proxy_variables[@]}"; do
+  printf -v "${proxy_variables[$candidate_index]}" 'http://winner-%s.example:8080' "$candidate_index"
+done
+for candidate_index in "${!proxy_variables[@]}"; do
+  assert_eq "http://winner-${candidate_index}.example:8080" "$(detect_proxy_candidate)" \
+    "${proxy_variables[$candidate_index]} wins among remaining valid proxy variables"
+  unset "${proxy_variables[$candidate_index]}"
+done
+
 for selected_index in "${!proxy_variables[@]}"; do
   clear_proxy_environment
   for candidate_index in "${!proxy_variables[@]}"; do

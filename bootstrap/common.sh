@@ -95,8 +95,10 @@ upsert_managed_block() {
   local content="$3"
   local start="# >>> tabby_config ${name} >>>"
   local end="# <<< tabby_config ${name} <<<"
-  local write_target directory temporary line mode in_block=0 inserted=0
+  local original_directory write_target directory temporary line mode in_block=0 inserted=0
 
+  original_directory="$(dirname "$target")"
+  mkdir -p "$original_directory"
   write_target="$(_tabby_resolve_symlink_target "$target")" || {
     warn "cannot resolve managed block target: $target"
     return 1
