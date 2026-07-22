@@ -371,17 +371,29 @@ install_tabby_config() {
 install_tabby_payload() {
   printf '%s\n' tabby-payload >>"$desktop_calls"
 }
+install_codex_server_config() {
+  printf '%s\n' codex-config >>"$desktop_calls"
+}
 
 unset DOTFILES_SKIP_TABBY
+unset DOTFILES_SKIP_CODEX_SERVER_CONFIG
+install_config_payload
+assert_eq \
+  $'codex-config\ntabby-payload' \
+  "$(<"$desktop_calls")" \
+  "desktop config payload default Codex and Tabby dispatch"
+assert_eq \
+  "2" \
+  "$(wc -l <"$desktop_calls" | tr -d ' ')" \
+  "desktop config payload default call count"
+
+: >"$desktop_calls"
+export DOTFILES_SKIP_CODEX_SERVER_CONFIG=1
 install_config_payload
 assert_eq \
   "tabby-payload" \
   "$(<"$desktop_calls")" \
-  "desktop config payload Tabby dispatch"
-assert_eq \
-  "1" \
-  "$(wc -l <"$desktop_calls" | tr -d ' ')" \
-  "desktop config payload Tabby call count"
+  "narrow Codex server config skip preserves the rest of the payload"
 
 assert_file_contains "$REPO_ROOT/README.md" 'tabby-osc-notify@1.0.0'
 assert_file_contains "$REPO_ROOT/README.md" '自动安装'

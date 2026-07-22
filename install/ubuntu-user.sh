@@ -1,23 +1,40 @@
 #!/usr/bin/env bash
+
+_TABBY_UBUNTU_USER_SOURCED=false
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then
+  _TABBY_UBUNTU_USER_SOURCED=true
+  case "$-" in *e*) _TABBY_UBUNTU_USER_ERREXIT=true ;; *) _TABBY_UBUNTU_USER_ERREXIT=false ;; esac
+  case "$-" in *u*) _TABBY_UBUNTU_USER_NOUNSET=true ;; *) _TABBY_UBUNTU_USER_NOUNSET=false ;; esac
+  if shopt -qo pipefail; then
+    _TABBY_UBUNTU_USER_PIPEFAIL=true
+  else
+    _TABBY_UBUNTU_USER_PIPEFAIL=false
+  fi
+fi
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bootstrap/common.sh
 source "$SCRIPT_DIR/../bootstrap/common.sh"
+# shellcheck source=bootstrap/server/environment.sh
+source "$SCRIPT_DIR/../bootstrap/server/environment.sh"
+# shellcheck source=bootstrap/server/miniforge.sh
+source "$SCRIPT_DIR/../bootstrap/server/miniforge.sh"
+# shellcheck source=bootstrap/server/monitoring.sh
+source "$SCRIPT_DIR/../bootstrap/server/monitoring.sh"
+# shellcheck source=bootstrap/server/docker.sh
+source "$SCRIPT_DIR/../bootstrap/server/docker.sh"
+# shellcheck source=bootstrap/server/codex.sh
+source "$SCRIPT_DIR/../bootstrap/server/codex.sh"
 
-is_linux || die "install/ubuntu-user.sh must be run on Linux"
-need_cmd apt-get
-need_cmd cc
-need_cmd curl
-need_cmd dpkg-deb
-need_cmd file
-need_cmd git
-need_cmd python3
-need_cmd tar
-need_cmd tmux
-need_cmd unzip
-
-export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+if [ "$_TABBY_UBUNTU_USER_SOURCED" = true ]; then
+  [ "$_TABBY_UBUNTU_USER_ERREXIT" = true ] || set +e
+  [ "$_TABBY_UBUNTU_USER_NOUNSET" = true ] || set +u
+  [ "$_TABBY_UBUNTU_USER_PIPEFAIL" = true ] || set +o pipefail
+  unset _TABBY_UBUNTU_USER_ERREXIT _TABBY_UBUNTU_USER_NOUNSET
+  unset _TABBY_UBUNTU_USER_PIPEFAIL _TABBY_UBUNTU_USER_SOURCED
+fi
 
 local_user_tool_usable() {
   local binary="$1"
@@ -252,24 +269,248 @@ fi
 EOF
 }
 
-ensure_base_dirs
-install_user_local_zsh
-install_user_cli_stack
-install_user_tree_sitter_cli
-install_user_release_tool nvim install_neovim_linux
-install_user_release_tool lazygit install_lazygit_linux
-install_user_release_tool yazi install_yazi_linux
+server_git() {
+  git "$@"
+}
 
-if [ -f "$HOME/.zshrc" ] && [ ! -L "$HOME/.zshrc" ] && [ ! -e "$HOME/.zshrc.local" ]; then
-  log "Preserving the existing machine-specific zsh config as ~/.zshrc.local"
-  cp "$HOME/.zshrc" "$HOME/.zshrc.local"
+configure_server_git_identity() {
+  server_git config --global user.name Bill-xing || return 1
+  server_git config --global user.email bill.xjm@gmail.com
+}
+
+server_conda_usable() {
+  "$1" --version >/dev/null 2>&1
+}
+
+server_monitoring_tool_usable() {
+  tool_usable "$1"
+}
+
+server_monitoring_tool_path() {
+  monitoring_command_discovery "$1"
+}
+
+server_docker_version() {
+  docker_execute "$1" --version
+}
+
+codex_server_config_managed() {
+  local source_file="$REPO_ROOT/config/codex/server.toml"
+  local merger="$REPO_ROOT/bootstrap/merge_codex_config.py"
+  local target="${CODEX_HOME:-$HOME/.codex}/config.toml"
+
+  [ -f "$source_file" ] && [ -f "$merger" ] && [ -f "$target" ] || return 1
+  python3 "$merger" "$source_file" "$target" | cmp -s - "$target"
+}
+
+record_codex_npm_action() {
+  local target
+
+  target="$(pretty_mermaid_target)" || return 1
+  if ! force_install &&
+    pretty_mermaid_existing_reusable "$target" >/dev/null 2>&1 &&
+    pretty_mermaid_dependencies_ready "$target" >/dev/null 2>&1; then
+    SERVER_CODEX_NPM_ACTION=not-needed
+  elif codex_npm_discovery npm >/dev/null 2>&1 &&
+    codex_node_discovery node >/dev/null 2>&1; then
+    SERVER_CODEX_NPM_ACTION=installed
+  else
+    SERVER_CODEX_NPM_ACTION=skipped-missing-node-or-npm
+  fi
+  export SERVER_CODEX_NPM_ACTION
+}
+
+select_server_docker_binary() {
+  local docker
+
+  if [ -n "${SERVER_DOCKER_BIN:-}" ]; then
+    return 0
+  fi
+  docker="$(_docker_find_command 2>/dev/null || true)"
+  if [ -z "$docker" ]; then
+    warn 'Docker installation completed without a selected Docker binary'
+    return 1
+  fi
+  SERVER_DOCKER_BIN="$docker"
+  export SERVER_DOCKER_BIN
+}
+
+verify_server_bootstrap() {
+  local actual conda docker docker_version target tool tool_path
+  local monitoring_locations=''
+
+  actual="$(server_git config --global --get user.name 2>/dev/null || true)"
+  if [ "$actual" != Bill-xing ]; then
+    warn 'server Git identity verification failed for user.name'
+    return 1
+  fi
+  actual="$(server_git config --global --get user.email 2>/dev/null || true)"
+  if [ "$actual" != bill.xjm@gmail.com ]; then
+    warn 'server Git identity verification failed for user.email'
+    return 1
+  fi
+
+  conda="$(conda_bin 2>/dev/null || true)"
+  if [ -z "$conda" ] || ! server_conda_usable "$conda"; then
+    warn 'server bootstrap verification failed: conda is not usable'
+    return 1
+  fi
+  SERVER_CONDA_BIN="$conda"
+  export SERVER_CONDA_BIN
+
+  for tool in nvitop btop htop; do
+    if ! server_monitoring_tool_usable "$tool"; then
+      warn "server bootstrap verification failed: $tool is not usable"
+      return 1
+    fi
+    tool_path="$(server_monitoring_tool_path "$tool" 2>/dev/null || true)"
+    [ -n "$tool_path" ] || tool_path="$tool"
+    monitoring_locations="${monitoring_locations}${monitoring_locations:+ }${tool}=${tool_path}"
+  done
+  SERVER_MONITORING_LOCATIONS="$monitoring_locations"
+  export SERVER_MONITORING_LOCATIONS
+
+  select_server_docker_binary || return 1
+  docker="${SERVER_DOCKER_BIN:-}"
+  if [ -z "$docker" ]; then
+    warn 'server bootstrap verification failed: no Docker binary was selected'
+    return 1
+  fi
+  docker_version="$(server_docker_version "$docker" 2>/dev/null || true)"
+  if [ -z "$docker_version" ]; then
+    warn "server bootstrap verification failed: $docker --version is unusable"
+    return 1
+  fi
+  SERVER_DOCKER_VERSION="$docker_version"
+  export SERVER_DOCKER_VERSION
+  if flag_enabled "${SERVER_DOCKER_REUSED_WITH_WARNINGS:-false}"; then
+    warn 'the existing Docker installation was kept unchanged with optional capability or daemon warnings'
+  fi
+
+  if ! codex_usable; then
+    warn 'server bootstrap verification failed: Codex is not usable'
+    return 1
+  fi
+  if ! codex_plugin_installed figma@openai-curated; then
+    warn 'server bootstrap verification failed: figma@openai-curated is not installed'
+    return 1
+  fi
+  if ! codex_plugin_installed superpowers@openai-curated; then
+    warn 'server bootstrap verification failed: superpowers@openai-curated is not installed'
+    return 1
+  fi
+  target="$(pretty_mermaid_target)" || return 1
+  if ! pretty_mermaid_existing_reusable "$target"; then
+    warn 'server bootstrap verification failed: pretty-mermaid pinned source is invalid'
+    return 1
+  fi
+  if ! pretty_mermaid_dependencies_ready "$target"; then
+    if codex_npm_discovery npm >/dev/null 2>&1 &&
+      codex_node_discovery node >/dev/null 2>&1; then
+      warn 'server bootstrap verification failed: pretty-mermaid runtime dependencies are invalid'
+      return 1
+    fi
+    warn 'pretty-mermaid source is valid, but Node.js/npm is unavailable so rendering dependencies remain optional'
+  fi
+  if ! codex_server_config_managed; then
+    warn 'server bootstrap verification failed: Codex config is missing or does not match the managed merge result'
+    return 1
+  fi
+}
+
+summarize_server_bootstrap() {
+  log 'Done. Complete Ubuntu user bootstrap verified.'
+  log 'Tabby was not installed or configured.'
+  log "User-local CLI tools: $HOME/.local/bin"
+  log "Conda: ${SERVER_CONDA_BIN:-unavailable}"
+  log "Monitoring: ${SERVER_MONITORING_LOCATIONS:-unavailable}"
+  log "Docker: ${SERVER_DOCKER_BIN:-unavailable} (${SERVER_DOCKER_VERSION:-version unavailable})"
+  log "Shell environment: ${XDG_CONFIG_HOME:-$HOME/.config}/tabby-config/server-env.sh"
+  log "Codex: ${CODEX_HOME:-$HOME/.codex}"
+
+  if flag_enabled "${SERVER_ROOTLESS_DOCKER:-false}"; then
+    log 'Docker mode: rootless; the user systemd Docker service was enabled and started.'
+  elif flag_enabled "${SERVER_DOCKER_NEEDS_RELOGIN:-false}"; then
+    log 'Docker mode: system; log out and back in to activate docker group membership.'
+  else
+    log 'Docker mode: existing installation kept unchanged.'
+  fi
+  if flag_enabled "${SERVER_DOCKER_REUSED_WITH_WARNINGS:-false}"; then
+    warn 'Existing Docker was reused with warnings; missing Compose, Buildx, or daemon access was not reinstalled or treated as fatal.'
+  fi
+
+  case "${SERVER_CODEX_NPM_ACTION:-unknown}" in
+    installed) log 'Codex pretty-mermaid npm action: installed or repaired locked runtime dependencies.' ;;
+    not-needed) log 'Codex pretty-mermaid npm action: not needed; locked runtime dependencies were already ready.' ;;
+    skipped-missing-node-or-npm) warn 'Codex pretty-mermaid npm action: skipped because Node.js or npm is unavailable.' ;;
+    *) warn 'Codex pretty-mermaid npm action could not be determined.' ;;
+  esac
+  log 'Run again to repair links quickly, or set DOTFILES_FORCE_INSTALL=1 to reinstall tools.'
+}
+
+main() {
+  local proxy_candidate conda_enabled=false
+
+  is_linux || die "install/ubuntu-user.sh must be run on Linux"
+  need_cmd apt-get || return 1
+  need_cmd cc || return 1
+  need_cmd cmp || return 1
+  need_cmd curl || return 1
+  need_cmd dpkg-deb || return 1
+  need_cmd file || return 1
+  need_cmd git || return 1
+  need_cmd python3 || return 1
+  need_cmd tar || return 1
+  need_cmd tmux || return 1
+  need_cmd unzip || return 1
+
+  proxy_candidate="$(detect_proxy_candidate)" || return 1
+  if sudo_available; then
+    SERVER_HAS_SUDO=true
+  else
+    SERVER_HAS_SUDO=false
+  fi
+  export SERVER_HAS_SUDO
+
+  export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+  ensure_base_dirs || return 1
+  install_user_local_zsh || return 1
+  install_user_cli_stack || return 1
+  install_user_tree_sitter_cli || return 1
+  install_user_release_tool nvim install_neovim_linux || return 1
+  install_user_release_tool lazygit install_lazygit_linux || return 1
+  install_user_release_tool yazi install_yazi_linux || return 1
+
+  if [ -f "$HOME/.zshrc" ] && [ ! -L "$HOME/.zshrc" ] && [ ! -e "$HOME/.zshrc.local" ]; then
+    log "Preserving the existing machine-specific zsh config as ~/.zshrc.local"
+    cp "$HOME/.zshrc" "$HOME/.zshrc.local" || return 1
+  fi
+
+  install_oh_my_zsh_stack || return 1
+  install_tmux_plugins || return 1
+  DOTFILES_SKIP_TABBY=1 \
+    DOTFILES_SKIP_CODEX_SERVER_CONFIG=1 \
+    install_config_payload || return 1
+  install_ssh_zsh_handoff || return 1
+
+  install_miniforge || return 1
+  install_monitoring_tools || return 1
+  install_docker || return 1
+  configure_server_git_identity || return 1
+  if [ -x "$HOME/miniforge3/bin/conda" ] &&
+    server_conda_usable "$HOME/miniforge3/bin/conda"; then
+    conda_enabled=true
+  fi
+  write_server_shell_environment \
+    "$proxy_candidate" \
+    "$conda_enabled" \
+    "${SERVER_ROOTLESS_DOCKER:-false}" || return 1
+  record_codex_npm_action || return 1
+  install_codex_server || return 1
+  verify_server_bootstrap || return 1
+  summarize_server_bootstrap
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
 fi
-
-install_oh_my_zsh_stack
-install_tmux_plugins
-export DOTFILES_SKIP_TABBY=1
-install_config_payload
-install_ssh_zsh_handoff
-
-log "Done. User-local tools are in ~/.local/bin; Tabby was not installed or configured."
-log "Run again to repair links quickly, or set DOTFILES_FORCE_INSTALL=1 to reinstall tools."

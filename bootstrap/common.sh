@@ -567,7 +567,11 @@ install_config_payload() {
   cfg="$(config_home)"
 
   ensure_base_dirs
-  install_codex_server_config
+  if flag_enabled "${DOTFILES_SKIP_CODEX_SERVER_CONFIG:-0}"; then
+    log "Skipping Codex server config (DOTFILES_SKIP_CODEX_SERVER_CONFIG is enabled)"
+  else
+    install_codex_server_config
+  fi
   link_or_copy "$REPO_ROOT/config/zsh/.zshrc" "$HOME/.zshrc"
   link_or_copy "$REPO_ROOT/config/zsh/.p10k.zsh" "$HOME/.p10k.zsh"
   link_or_copy "$REPO_ROOT/config/tmux/.tmux.conf" "$HOME/.tmux.conf"
