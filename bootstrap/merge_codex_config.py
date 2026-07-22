@@ -6,6 +6,7 @@ from __future__ import annotations
 import re
 import sys
 from dataclasses import dataclass
+from datetime import date, datetime, time
 from pathlib import Path
 
 try:
@@ -15,6 +16,21 @@ except ImportError:  # pragma: no cover - structural validation is used below.
 
 
 BARE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+DECIMAL_INTEGER_RE = re.compile(r"[+-]?(?:0|[1-9](?:_?\d)*)$")
+BASE_INTEGER_RE = re.compile(
+    r"(?:0x[0-9A-Fa-f](?:_?[0-9A-Fa-f])*|0o[0-7](?:_?[0-7])*|0b[01](?:_?[01])*)$"
+)
+FLOAT_RE = re.compile(
+    r"[+-]?(?:(?:0|[1-9](?:_?\d)*)\.\d(?:_?\d)*"
+    r"(?:[eE][+-]?\d(?:_?\d)*)?"
+    r"|(?:0|[1-9](?:_?\d)*)[eE][+-]?\d(?:_?\d)*|inf|nan)$"
+)
+LOCAL_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}$")
+LOCAL_TIME_RE = re.compile(r"\d{2}:\d{2}:\d{2}(?:\.\d+)?$")
+DATE_TIME_RE = re.compile(
+    r"\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?"
+    r"(?:Z|[+-]\d{2}:\d{2})?$"
+)
 
 
 class MergeError(ValueError):
@@ -54,6 +70,11 @@ class ManagedGroup:
     header: str | None
     keys: list[tuple[str, ...]]
     assignments: dict[tuple[str, ...], str]
+
+
+@dataclass
+class NamespaceNode:
+    kind: str
 
 
 def read_text(path: Path) -> str:
@@ -299,6 +320,337 @@ def value_is_complete(rhs: str) -> bool:
     return True
 
 
+class FallbackValueParser:
+    """Validate the common TOML subset used by Codex without reserializing it.
+
+    The fallback accepts strings, numbers, booleans, ISO-style date/time values,
+    arrays, and single-line inline tables. Unsupported forms fail closed.
+    """
+
+    def __init__(self, text: str, label: str) -> None:
+        self.text = text
+        self.label = label
+        self.index = 0
+        self.inline_depth = 0
+
+    def error(self, message: str) -> MergeError:
+        return MergeError(f"malformed {self.label} value: {message}")
+
+    def parse(self) -> None:
+        self.skip_space_and_comments()
+        self.parse_value()
+        self.skip_space_and_comments()
+        if self.index != len(self.text):
+            raise self.error("unexpected content after value")
+
+    def skip_space_and_comments(self) -> None:
+        while self.index < len(self.text):
+            char = self.text[self.index]
+            if char in " \t\r\n":
+                if self.inline_depth and char in "\r\n":
+                    raise self.error("inline tables must stay on one line")
+                self.index += 1
+            elif char == "#":
+                if self.inline_depth:
+                    raise self.error("comments are not supported inside inline tables")
+                newline = self.text.find("\n", self.index)
+                self.index = len(self.text) if newline < 0 else newline + 1
+            else:
+                return
+
+    def parse_value(self) -> None:
+        if self.index >= len(self.text):
+            raise self.error("missing value")
+        if self.text.startswith('"""', self.index):
+            self.parse_basic_string(multiline=True)
+        elif self.text.startswith("'''", self.index):
+            self.parse_literal_string(multiline=True)
+        elif self.text[self.index] == '"':
+            self.parse_basic_string(multiline=False)
+        elif self.text[self.index] == "'":
+            self.parse_literal_string(multiline=False)
+        elif self.text[self.index] == "[":
+            self.parse_array()
+        elif self.text[self.index] == "{":
+            self.parse_inline_table()
+        else:
+            self.parse_bare_value()
+
+    def parse_basic_string(self, *, multiline: bool) -> None:
+        if multiline and self.inline_depth:
+            raise self.error("multiline strings are not supported inside inline tables")
+        delimiter = '"""' if multiline else '"'
+        self.index += len(delimiter)
+        while self.index < len(self.text):
+            if self.text.startswith(delimiter, self.index):
+                self.index += len(delimiter)
+                return
+            char = self.text[self.index]
+            if char == "\\":
+                self.index += 1
+                if self.index >= len(self.text):
+                    raise self.error("unterminated escape sequence")
+                escaped = self.text[self.index]
+                if multiline and escaped in "\r\n":
+                    if escaped == "\r" and self.index + 1 < len(self.text):
+                        if self.text[self.index + 1] == "\n":
+                            self.index += 1
+                    self.index += 1
+                    while self.index < len(self.text) and self.text[self.index] in " \t\r\n":
+                        self.index += 1
+                    continue
+                if escaped in '"\\btnfr':
+                    self.index += 1
+                    continue
+                if escaped in "uU":
+                    digits = 4 if escaped == "u" else 8
+                    codepoint = self.text[self.index + 1 : self.index + 1 + digits]
+                    if len(codepoint) != digits or not re.fullmatch(
+                        rf"[0-9A-Fa-f]{{{digits}}}", codepoint
+                    ):
+                        raise self.error("invalid Unicode escape")
+                    value = int(codepoint, 16)
+                    if value > 0x10FFFF or 0xD800 <= value <= 0xDFFF:
+                        raise self.error("invalid Unicode code point")
+                    self.index += digits + 1
+                    continue
+                raise self.error(f"invalid escape sequence: \\{escaped}")
+            if not multiline and char in "\r\n":
+                raise self.error("basic string crosses a line boundary")
+            if (ord(char) < 0x20 and char not in ("\t", "\n", "\r")) or ord(char) == 0x7F:
+                raise self.error("control character in basic string")
+            self.index += 1
+        raise self.error("unterminated basic string")
+
+    def parse_literal_string(self, *, multiline: bool) -> None:
+        if multiline and self.inline_depth:
+            raise self.error("multiline strings are not supported inside inline tables")
+        delimiter = "'''" if multiline else "'"
+        self.index += len(delimiter)
+        closing = self.text.find(delimiter, self.index)
+        if closing < 0:
+            raise self.error("unterminated literal string")
+        content = self.text[self.index : closing]
+        if not multiline and any(char in content for char in "\r\n"):
+            raise self.error("literal string crosses a line boundary")
+        if any(
+            (ord(char) < 0x20 and char not in ("\t", "\n", "\r"))
+            or ord(char) == 0x7F
+            for char in content
+        ):
+            raise self.error("control character in literal string")
+        self.index = closing + len(delimiter)
+
+    def parse_array(self) -> None:
+        self.index += 1
+        self.skip_space_and_comments()
+        if self.consume("]"):
+            return
+        while True:
+            self.parse_value()
+            self.skip_space_and_comments()
+            if self.consume("]"):
+                return
+            if not self.consume(","):
+                raise self.error("array values must be comma-separated")
+            self.skip_space_and_comments()
+            if self.consume("]"):
+                return
+
+    def parse_inline_table(self) -> None:
+        self.index += 1
+        self.inline_depth += 1
+        paths: set[tuple[str, ...]] = set()
+        try:
+            self.skip_space_and_comments()
+            if self.consume("}"):
+                return
+            while True:
+                key = self.parse_inline_key()
+                if any(is_prefix(key, path) or is_prefix(path, key) for path in paths):
+                    raise self.error(f"duplicate or colliding inline-table key: {key}")
+                paths.add(key)
+                self.skip_space_and_comments()
+                if not self.consume("="):
+                    raise self.error("inline-table key is missing '='")
+                self.skip_space_and_comments()
+                self.parse_value()
+                self.skip_space_and_comments()
+                if self.consume("}"):
+                    return
+                if not self.consume(","):
+                    raise self.error("inline-table values must be comma-separated")
+                self.skip_space_and_comments()
+                if self.index < len(self.text) and self.text[self.index] == "}":
+                    raise self.error("inline tables cannot have a trailing comma")
+        finally:
+            self.inline_depth -= 1
+
+    def parse_inline_key(self) -> tuple[str, ...]:
+        start = self.index
+        quote: str | None = None
+        escaped = False
+        while self.index < len(self.text):
+            char = self.text[self.index]
+            if quote == '"':
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = None
+            elif quote == "'":
+                if char == quote:
+                    quote = None
+            elif char in ('"', "'"):
+                quote = char
+            elif char == "=":
+                expression = self.text[start:self.index].strip()
+                if not expression:
+                    raise self.error("empty inline-table key")
+                return parse_key_path(expression)
+            elif char in "\r\n#},":
+                raise self.error("invalid inline-table key")
+            self.index += 1
+        raise self.error("unterminated inline table")
+
+    def parse_bare_value(self) -> None:
+        start = self.index
+        while self.index < len(self.text) and self.text[self.index] not in " \t\r\n,#]}":
+            self.index += 1
+        token = self.text[start:self.index]
+        if not token or not self.valid_bare_token(token):
+            raise self.error(f"invalid bare value: {token or '<empty>'}")
+
+    @staticmethod
+    def valid_bare_token(token: str) -> bool:
+        if token in ("true", "false", "+inf", "-inf", "inf", "+nan", "-nan", "nan"):
+            return True
+        if DECIMAL_INTEGER_RE.fullmatch(token) or BASE_INTEGER_RE.fullmatch(token):
+            return True
+        if FLOAT_RE.fullmatch(token):
+            return True
+        if DATE_TIME_RE.fullmatch(token):
+            normalized = token[:-1] + "+00:00" if token.endswith("Z") else token
+            parser = datetime.fromisoformat
+        elif LOCAL_DATE_RE.fullmatch(token):
+            normalized = token
+            parser = date.fromisoformat
+        elif LOCAL_TIME_RE.fullmatch(token):
+            normalized = token
+            parser = time.fromisoformat
+        else:
+            return False
+        try:
+            parser(normalized)
+        except ValueError:
+            return False
+        return True
+
+    def consume(self, expected: str) -> bool:
+        if self.text.startswith(expected, self.index):
+            self.index += len(expected)
+            return True
+        return False
+
+
+class FallbackNamespace:
+    """Reject duplicate/colliding paths while preserving simple array tables.
+
+    Repeated array-of-table headers and their direct keys are supported. Tables
+    nested below an array element are deliberately rejected by this fallback.
+    """
+
+    def __init__(self, label: str) -> None:
+        self.label = label
+        self.symbols: dict[tuple[str, ...], NamespaceNode] = {}
+        self.array_counts: dict[tuple[str, ...], int] = {}
+        self.array_scopes: dict[
+            tuple[tuple[str, ...], int], dict[tuple[str, ...], NamespaceNode]
+        ] = {}
+
+    def error(self, message: str, path: tuple[str, ...]) -> MergeError:
+        return MergeError(f"malformed {self.label}: {message}: {path}")
+
+    def define_table(
+        self, path: tuple[str, ...], is_array: bool
+    ) -> tuple[tuple[str, ...], int] | None:
+        for length in range(1, len(path)):
+            prefix = path[:length]
+            node = self.symbols.get(prefix)
+            if node and node.kind in ("value", "dotted", "array"):
+                raise self.error(
+                    "table parent collides with an existing value or sealed table",
+                    prefix,
+                )
+            self.symbols.setdefault(prefix, NamespaceNode("implicit"))
+
+        node = self.symbols.get(path)
+        if is_array:
+            if node is None or node.kind == "implicit":
+                self.symbols[path] = NamespaceNode("array")
+            elif node.kind != "array":
+                raise self.error("array table collides with an existing symbol", path)
+            count = self.array_counts.get(path, 0) + 1
+            self.array_counts[path] = count
+            scope = (path, count)
+            self.array_scopes[scope] = {}
+            return scope
+
+        if node is None or node.kind == "implicit":
+            self.symbols[path] = NamespaceNode("table")
+            return None
+        raise self.error("duplicate or colliding table", path)
+
+    def define_assignment(
+        self,
+        table: tuple[str, ...],
+        key: tuple[str, ...],
+        array_scope: tuple[tuple[str, ...], int] | None,
+    ) -> None:
+        if array_scope is not None and table == array_scope[0]:
+            symbols = self.array_scopes[array_scope]
+            self.define_value_path(symbols, key, ())
+            return
+        self.define_value_path(self.symbols, table + key, table)
+
+    def define_value_path(
+        self,
+        symbols: dict[tuple[str, ...], NamespaceNode],
+        path: tuple[str, ...],
+        table: tuple[str, ...],
+    ) -> None:
+        for length in range(1, len(path)):
+            prefix = path[:length]
+            node = symbols.get(prefix)
+            if node and node.kind in ("value", "array"):
+                raise self.error("key parent collides with an existing value", prefix)
+            if node is None:
+                kind = "implicit" if is_prefix(prefix, table) else "dotted"
+                symbols[prefix] = NamespaceNode(kind)
+        if path in symbols:
+            raise self.error("duplicate or colliding key", path)
+        symbols[path] = NamespaceNode("value")
+
+
+def validate_fallback_document(document: Document, label: str) -> None:
+    namespace = FallbackNamespace(label)
+    headers = {header.index: header for header in document.headers}
+    assignments = {assignment.start: assignment for assignment in document.assignments}
+    current_array_scope: tuple[tuple[str, ...], int] | None = None
+
+    for index in range(len(document.lines)):
+        header = headers.get(index)
+        if header is not None:
+            current_array_scope = namespace.define_table(header.path, header.is_array)
+            continue
+        assignment = assignments.get(index)
+        if assignment is None:
+            continue
+        FallbackValueParser(assignment.rhs, label).parse()
+        namespace.define_assignment(assignment.table, assignment.key, current_array_scope)
+
+
 def parse_document(text: str, label: str) -> Document:
     validate_toml(text, label)
     lines = text.splitlines(keepends=True)
@@ -337,17 +689,7 @@ def parse_document(text: str, label: str) -> Document:
         index = end
 
     if tomllib is None:
-        ordinary_tables: set[tuple[str, ...]] = set()
-        for header in headers:
-            if not header.is_array:
-                if header.path in ordinary_tables:
-                    raise MergeError(f"duplicate table in {label}: {header.path}")
-                ordinary_tables.add(header.path)
-        assigned: set[tuple[str, ...]] = set()
-        for assignment in assignments:
-            if assignment.full_path in assigned:
-                raise MergeError(f"duplicate key in {label}: {assignment.full_path}")
-            assigned.add(assignment.full_path)
+        validate_fallback_document(Document(lines, headers, assignments), label)
 
     return Document(lines, headers, assignments)
 
@@ -422,6 +764,8 @@ def check_existing_safety(
     table_counts: dict[tuple[str, ...], int] = {}
 
     for header in document.headers:
+        if any(is_prefix(path, header.path) for path in managed_paths):
+            raise MergeError(f"table conflicts with managed scalar key: {header.path}")
         if header.path in group_paths:
             table_counts[header.path] = table_counts.get(header.path, 0) + 1
             if header.is_array:
@@ -537,7 +881,9 @@ def merge_config(fragment: str, existing: str) -> str:
     groups, managed_lines = parse_fragment(fragment)
     if not existing:
         newline = newline_style(fragment)
-        return fragment if fragment.endswith(("\n", "\r")) else f"{fragment}{newline}"
+        result = fragment if fragment.endswith(("\n", "\r")) else f"{fragment}{newline}"
+        parse_document(result, "merged result")
+        return result
 
     document = parse_document(existing, "existing config")
     found = check_existing_safety(document, groups, managed_lines)
@@ -551,7 +897,7 @@ def merge_config(fragment: str, existing: str) -> str:
     result = "".join(lines)
     if not result.endswith(("\n", "\r")):
         result += newline
-    validate_toml(result, "merged result")
+    parse_document(result, "merged result")
     return result
 
 

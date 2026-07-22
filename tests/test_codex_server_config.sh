@@ -46,11 +46,39 @@ assert_rejected() {
     fail "$message: rejected merge did not explain the error"
 }
 
+assert_fallback_rejected() {
+  local fragment="$1"
+  local existing="$2"
+  local message="$3"
+
+  if python3 "$tmp_dir/fallback_runner.py" "$MERGER" "$fragment" "$existing" \
+    >"$tmp_dir/rejected.out" 2>"$tmp_dir/rejected.err"; then
+    fail "$message"
+  fi
+  [ ! -s "$tmp_dir/rejected.out" ] ||
+    fail "$message: rejected fallback merge emitted partial stdout"
+  [ -s "$tmp_dir/rejected.err" ] ||
+    fail "$message: rejected fallback merge did not explain the error"
+}
+
 [ -f "$FRAGMENT" ] || fail "missing canonical Codex server config"
 [ -f "$MERGER" ] || fail "missing generic Codex config merger"
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
+
+cat >"$tmp_dir/fallback_runner.py" <<'PY'
+import importlib.util
+import sys
+
+merger_path = sys.argv[1]
+spec = importlib.util.spec_from_file_location("merge_codex_config_fallback", merger_path)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+module.tomllib = None
+raise SystemExit(module.main([merger_path, *sys.argv[2:]]))
+PY
 
 cat >"$tmp_dir/canonical.toml" <<'EOF'
 model = "gpt-5.6-sol"
@@ -388,5 +416,178 @@ if python3 "$MERGER" >"$tmp_dir/rejected.out" 2>"$tmp_dir/rejected.err"; then
   fail "invalid CLI arguments must be rejected"
 fi
 [ ! -s "$tmp_dir/rejected.out" ] || fail "invalid CLI arguments emitted stdout"
+
+cat >"$tmp_dir/fallback-invalid-fragment.toml" <<'EOF'
+model = @@@
+EOF
+assert_fallback_rejected \
+  "$tmp_dir/fallback-invalid-fragment.toml" \
+  "$tmp_dir/existing.toml" \
+  "fallback validation must reject malformed fragment values"
+
+cat >"$tmp_dir/fallback-invalid-existing.toml" <<'EOF'
+custom_value = @@@
+EOF
+assert_fallback_rejected \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-invalid-existing.toml" \
+  "fallback validation must reject malformed existing values"
+
+assert_fallback_rejected \
+  "$FRAGMENT" \
+  "$tmp_dir/duplicate-existing-key.toml" \
+  "fallback validation must reject duplicate keys"
+assert_fallback_rejected \
+  "$FRAGMENT" \
+  "$tmp_dir/duplicate-existing-table.toml" \
+  "fallback validation must reject duplicate tables"
+
+for invalid_value in truth 01 1__2 0xGG 2026-W30-3 2026-07-22T12:34:56z; do
+  printf 'custom_value = %s\n' "$invalid_value" >"$tmp_dir/fallback-invalid-scalar.toml"
+  assert_fallback_rejected \
+    "$FRAGMENT" \
+    "$tmp_dir/fallback-invalid-scalar.toml" \
+    "fallback validation must reject invalid scalar: $invalid_value"
+done
+
+printf 'custom_value = "unterminated\n' >"$tmp_dir/fallback-unclosed-string.toml"
+assert_fallback_rejected \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-unclosed-string.toml" \
+  "fallback validation must reject unclosed strings"
+
+printf 'custom_value = [1, 2\n' >"$tmp_dir/fallback-unclosed-array.toml"
+assert_fallback_rejected \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-unclosed-array.toml" \
+  "fallback validation must reject unclosed arrays"
+
+printf 'custom_value = { name = "broken"\n' >"$tmp_dir/fallback-unclosed-inline.toml"
+assert_fallback_rejected \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-unclosed-inline.toml" \
+  "fallback validation must reject unclosed inline tables"
+
+printf 'custom_value = { name = "broken", }\n' >"$tmp_dir/fallback-inline-trailing-comma.toml"
+assert_fallback_rejected \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-inline-trailing-comma.toml" \
+  "fallback validation must reject inline-table trailing commas"
+
+printf 'custom_value = [1 2]\n' >"$tmp_dir/fallback-array-missing-comma.toml"
+assert_fallback_rejected \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-array-missing-comma.toml" \
+  "fallback validation must reject arrays with missing commas"
+
+printf 'custom_value = "\\UFFFFFFFF"\n' >"$tmp_dir/fallback-invalid-unicode.toml"
+assert_fallback_rejected \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-invalid-unicode.toml" \
+  "fallback validation must reject invalid Unicode code points"
+
+cat >"$tmp_dir/fallback-multiline-inline.toml" <<'EOF'
+custom_value = { text = """
+not allowed
+""" }
+EOF
+assert_fallback_rejected \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-multiline-inline.toml" \
+  "fallback validation must reject multiline inline tables"
+
+printf 'bad key = true\n' >"$tmp_dir/fallback-broken-key.toml"
+assert_fallback_rejected \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-broken-key.toml" \
+  "fallback validation must reject broken keys"
+
+printf 'custom_value true\n' >"$tmp_dir/fallback-missing-equals.toml"
+assert_fallback_rejected \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-missing-equals.toml" \
+  "fallback validation must reject missing assignment operators"
+
+cat >"$tmp_dir/fallback-path-collision.toml" <<'EOF'
+custom = true
+custom.child = false
+EOF
+assert_fallback_rejected \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-path-collision.toml" \
+  "fallback validation must reject scalar and child-key collisions"
+
+cat >"$tmp_dir/fallback-scalar-table-collision.toml" <<'EOF'
+custom = true
+
+[custom]
+EOF
+assert_fallback_rejected \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-scalar-table-collision.toml" \
+  "fallback validation must reject scalar and table collisions"
+
+cat >"$tmp_dir/fallback-dotted-table-collision.toml" <<'EOF'
+custom.child = false
+
+[custom]
+other = true
+EOF
+assert_fallback_rejected \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-dotted-table-collision.toml" \
+  "fallback validation must reject dotted-key and table collisions"
+
+cat >"$tmp_dir/fallback-managed-scalar-table.toml" <<'EOF'
+[tui.notifications]
+EOF
+assert_fallback_rejected \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-managed-scalar-table.toml" \
+  "fallback merge must reject tables at managed scalar paths"
+
+cat >"$tmp_dir/fallback-valid-existing.toml" <<'EOF'
+# preserve fallback comments and common values
+custom_date = 2026-07-22T12:34:56Z
+custom_numbers = [1, -2, 3.5, 6.02e23, true, "text"]
+custom_inline = { name = "value", count = 2 }
+custom_multiline = [
+  "one", # keep array comment
+  "two",
+]
+
+[projects."/srv/app"]
+trust_level = "trusted"
+
+[mcp_servers.keep]
+command = "keep-mcp"
+args = ["--flag", "value"]
+
+[[workers]]
+name = "one"
+
+[[workers]]
+name = "two"
+EOF
+python3 "$tmp_dir/fallback_runner.py" \
+  "$MERGER" \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-valid-existing.toml" \
+  >"$tmp_dir/fallback-valid-merged.toml"
+assert_file_contains \
+  "$tmp_dir/fallback-valid-merged.toml" \
+  '# preserve fallback comments and common values'
+assert_file_contains "$tmp_dir/fallback-valid-merged.toml" 'custom_date = 2026-07-22T12:34:56Z'
+assert_file_contains "$tmp_dir/fallback-valid-merged.toml" '[projects."/srv/app"]'
+assert_file_contains "$tmp_dir/fallback-valid-merged.toml" '[mcp_servers.keep]'
+[ "$(grep -c '^\[\[workers\]\]$' "$tmp_dir/fallback-valid-merged.toml")" -eq 2 ] ||
+  fail "fallback validation must preserve repeated array-of-table headers"
+python3 "$tmp_dir/fallback_runner.py" \
+  "$MERGER" \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-valid-merged.toml" \
+  >"$tmp_dir/fallback-valid-second.toml"
+cmp -s "$tmp_dir/fallback-valid-merged.toml" "$tmp_dir/fallback-valid-second.toml" ||
+  fail "fallback validation must preserve byte-identical second merges"
 
 printf 'Codex server config merge checks passed\n'
