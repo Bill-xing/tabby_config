@@ -344,11 +344,11 @@ nvim --headless \
   docker buildx version
   docker compose version
   codex plugin list | awk '
-    $1 == "figma@openai-curated" && $2 == "installed," && $3 == "enabled" { found=1 }
+    $1 == "figma@openai-curated" && ($2 == "installed" || $2 == "installed,") && $3 == "enabled" { found=1 }
     END { exit(found ? 0 : 1) }
   '
   codex plugin list | awk '
-    $1 == "superpowers@openai-curated" && $2 == "installed," && $3 == "enabled" { found=1 }
+    $1 == "superpowers@openai-curated" && ($2 == "installed" || $2 == "installed,") && $3 == "enabled" { found=1 }
     END { exit(found ? 0 : 1) }
   '
   test -f "${CODEX_HOME:-$HOME/.codex}/skills/pretty-mermaid/SKILL.md"
