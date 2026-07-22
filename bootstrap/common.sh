@@ -561,7 +561,7 @@ install_neovim_linux() {
 
   url="https://github.com/neovim/neovim/releases/latest/download/${asset}"
   tmp_dir="$(mktemp -d)"
-  trap 'rm -rf "$tmp_dir"' RETURN
+  trap 'rm -rf "$tmp_dir"; trap - RETURN' RETURN
 
   log "Installing Neovim from $url"
   fetch_url "$url" "$tmp_dir/$asset"
@@ -585,7 +585,7 @@ install_lazygit_linux() {
 
   url="$(github_latest_asset_url 'jesseduffield/lazygit' "$pattern")"
   tmp_dir="$(mktemp -d)"
-  trap 'rm -rf "$tmp_dir"' RETURN
+  trap 'rm -rf "$tmp_dir"; trap - RETURN' RETURN
   asset_name="$(basename "$url")"
 
   log "Installing Lazygit from $url"
@@ -605,7 +605,7 @@ install_yazi_linux() {
 
   url="$(github_latest_asset_url 'sxyazi/yazi' "$pattern")"
   tmp_dir="$(mktemp -d)"
-  trap 'rm -rf "$tmp_dir"' RETURN
+  trap 'rm -rf "$tmp_dir"; trap - RETURN' RETURN
   asset_name="$(basename "$url")"
 
   log "Installing Yazi from $url"
