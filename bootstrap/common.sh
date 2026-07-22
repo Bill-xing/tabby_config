@@ -387,44 +387,82 @@ install_tabby_config() {
   cp "$source_file" "$target"
 }
 
-install_codex_notifications() {
+next_codex_config_backup_path() {
+  local target="$1"
+  local stamp backup suffix
+
+  stamp="$(date +%Y%m%d%H%M%S)"
+  backup="${target}.bak.${stamp}"
+  suffix=1
+  while [ -e "$backup" ] || [ -L "$backup" ]; do
+    backup="${target}.bak.${stamp}.${suffix}"
+    suffix=$((suffix + 1))
+  done
+  printf '%s\n' "$backup"
+}
+
+install_codex_server_config() {
   local source_file="$REPO_ROOT/config/codex/server.toml"
   local merger="$REPO_ROOT/bootstrap/merge_codex_config.py"
-  local codex_home target temp_file
+  local codex_home target temp_file backup
 
   if ! have codex; then
-    log "Skipping Codex notifications (codex is not installed)"
+    log "Skipping Codex server config (codex is not installed)"
     return 0
   fi
   if ! have python3; then
-    warn "Skipping Codex notifications (python3 is required to merge config.toml safely)"
+    warn "Skipping Codex server config (python3 is required to merge config.toml safely)"
     return 0
   fi
 
-  [ -f "$source_file" ] || die "missing Codex server config: $source_file"
-  [ -f "$merger" ] || die "missing Codex config merger: $merger"
+  if [ ! -f "$source_file" ]; then
+    warn "missing Codex server config: $source_file"
+    return 1
+  fi
+  if [ ! -f "$merger" ]; then
+    warn "missing Codex config merger: $merger"
+    return 1
+  fi
 
   codex_home="${CODEX_HOME:-$HOME/.codex}"
   target="$codex_home/config.toml"
-  mkdir -p "$codex_home"
-  temp_file="$(mktemp "${target}.tmp.XXXXXX")"
+  if ! mkdir -p "$codex_home"; then
+    warn "cannot create Codex config directory: $codex_home"
+    return 1
+  fi
+  if ! temp_file="$(mktemp "${target}.tmp.XXXXXX")"; then
+    warn "cannot create a temporary Codex config beside $target"
+    return 1
+  fi
 
   if [ -e "$target" ] || [ -L "$target" ]; then
     if ! python3 "$merger" "$source_file" "$target" >"$temp_file"; then
       rm -f "$temp_file"
-      die "failed to merge Codex server config into $target"
+      warn "failed to merge Codex server config into $target"
+      return 1
     fi
     if cmp -s "$temp_file" "$target"; then
       rm -f "$temp_file"
       return 0
     fi
-    backup_existing "$target"
+    backup="$(next_codex_config_backup_path "$target")"
+    log "Backing up $target -> $backup"
+    if ! cp -p "$target" "$backup"; then
+      rm -f "$backup" "$temp_file"
+      warn "failed to copy Codex config backup: $backup"
+      return 1
+    fi
   elif ! python3 "$merger" "$source_file" >"$temp_file"; then
     rm -f "$temp_file"
-    die "failed to create Codex server config"
+    warn "failed to create Codex server config"
+    return 1
   fi
 
-  mv "$temp_file" "$target"
+  if ! mv -f "$temp_file" "$target"; then
+    rm -f "$temp_file"
+    warn "failed to atomically publish Codex server config to $target"
+    return 1
+  fi
   log "Installed Codex server config in $target"
 }
 
@@ -529,7 +567,7 @@ install_config_payload() {
   cfg="$(config_home)"
 
   ensure_base_dirs
-  install_codex_notifications
+  install_codex_server_config
   link_or_copy "$REPO_ROOT/config/zsh/.zshrc" "$HOME/.zshrc"
   link_or_copy "$REPO_ROOT/config/zsh/.p10k.zsh" "$HOME/.p10k.zsh"
   link_or_copy "$REPO_ROOT/config/tmux/.tmux.conf" "$HOME/.tmux.conf"

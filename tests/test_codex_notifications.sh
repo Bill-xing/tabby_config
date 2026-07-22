@@ -178,8 +178,10 @@ printf 'Codex server fragment and merge checks passed\n'
 # shellcheck source=bootstrap/common.sh
 source "$REPO_ROOT/bootstrap/common.sh"
 
-assert_file_contains "$REPO_ROOT/bootstrap/common.sh" 'install_codex_notifications()'
-assert_file_contains "$REPO_ROOT/bootstrap/common.sh" '  install_codex_notifications'
+assert_file_contains "$REPO_ROOT/bootstrap/common.sh" 'install_codex_server_config()'
+assert_file_contains "$REPO_ROOT/bootstrap/common.sh" '  install_codex_server_config'
+assert_file_contains "$REPO_ROOT/bootstrap/common.sh" 'cp -p "$target" "$backup"'
+assert_file_contains "$REPO_ROOT/bootstrap/common.sh" 'mv -f "$temp_file" "$target"'
 
 export HOME="$tmp_dir/home"
 unset CODEX_HOME
@@ -193,7 +195,38 @@ date() {
   fi
 }
 
-install_codex_notifications
+MOCK_CODEX_AVAILABLE=1
+MOCK_CODEX_BACKUP_COPY_FAILURE=0
+MOCK_CODEX_PUBLISH_FAILURE=0
+
+have() {
+  if [ "$1" = "codex" ]; then
+    [ "$MOCK_CODEX_AVAILABLE" -eq 1 ]
+    return
+  fi
+  command -v "$1" >/dev/null 2>&1
+}
+
+cp() {
+  if [ "$MOCK_CODEX_BACKUP_COPY_FAILURE" -eq 1 ] &&
+    [ "${1:-}" = "-p" ] && [[ "${3:-}" == *.bak.* ]]; then
+    [ -f "${2:-}" ] || fail "backup copy must run while the live target exists"
+    printf '%s\n' 'partial backup' >"$3"
+    return 1
+  fi
+  command cp "$@"
+}
+
+mv() {
+  if [ "$MOCK_CODEX_PUBLISH_FAILURE" -eq 1 ] &&
+    [ "${1:-}" = "-f" ] && [[ "${2:-}" == *.tmp.* ]]; then
+    [ -f "${3:-}" ] || fail "publish must leave the live target in place until rename"
+    return 1
+  fi
+  command mv "$@"
+}
+
+install_codex_server_config
 target="$HOME/.codex/config.toml"
 [ -f "$target" ] || fail "Codex config was not installed"
 cmp -s "$FRAGMENT" "$target" ||
@@ -209,13 +242,15 @@ notifications = false
 notification_method = "bel"
 notification_condition = "unfocused"
 EOF
-cp "$target" "$tmp_dir/original-config.toml"
+chmod 640 "$target"
+command cp "$target" "$tmp_dir/original-config.toml"
 
-install_codex_notifications
+install_codex_server_config
 backup="${target}.bak.20260716120000"
 [ -f "$backup" ] || fail "changed Codex config must be backed up"
 cmp -s "$tmp_dir/original-config.toml" "$backup" ||
   fail "Codex config backup must preserve the original bytes"
+assert_eq "640" "$(_tabby_file_mode "$backup")" "Codex backup mode"
 assert_file_contains "$target" 'model = "gpt-5.6-sol"'
 assert_file_contains "$target" 'approval_policy = "on-request"'
 assert_file_contains \
@@ -224,25 +259,79 @@ assert_file_contains \
 assert_file_contains "$target" 'notification_method = "osc9"'
 assert_file_contains "$target" 'notification_condition = "always"'
 
-install_codex_notifications
+install_codex_server_config
 shopt -s nullglob
 backups=("$target".bak.*)
 shopt -u nullglob
 assert_eq "1" "${#backups[@]}" "idempotent install backup count"
 
+export CODEX_HOME="$tmp_dir/no-backup-codex"
+install_codex_server_config
+install_codex_server_config
+shopt -s nullglob
+backups=("$CODEX_HOME/config.toml".bak.*)
+shopt -u nullglob
+assert_eq "0" "${#backups[@]}" "unchanged config backup count"
+
+export CODEX_HOME="$tmp_dir/backup-failure-codex"
+mkdir -p "$CODEX_HOME"
+target="$CODEX_HOME/config.toml"
+cat >"$target" <<'EOF'
+model = "backup-failure-original"
+custom = "keep"
+EOF
+chmod 640 "$target"
+command cp "$target" "$tmp_dir/backup-failure-original.toml"
+MOCK_CODEX_BACKUP_COPY_FAILURE=1
+if install_codex_server_config; then
+  fail "Codex backup-copy failure must propagate"
+fi
+MOCK_CODEX_BACKUP_COPY_FAILURE=0
+cmp -s "$tmp_dir/backup-failure-original.toml" "$target" ||
+  fail "backup-copy failure must leave the live config byte-identical"
+shopt -s nullglob
+backups=("$target".bak.*)
+temps=("$target".tmp.*)
+shopt -u nullglob
+assert_eq "0" "${#backups[@]}" "failed backup must remove partial backup files"
+assert_eq "0" "${#temps[@]}" "failed backup must remove merge temp files"
+assert_eq "640" "$(_tabby_file_mode "$target")" "backup-failure target mode"
+
+export CODEX_HOME="$tmp_dir/publish-failure-codex"
+mkdir -p "$CODEX_HOME"
+target="$CODEX_HOME/config.toml"
+cat >"$target" <<'EOF'
+model = "publish-failure-original"
+custom = "keep"
+EOF
+chmod 640 "$target"
+command cp "$target" "$tmp_dir/publish-failure-original.toml"
+MOCK_CODEX_PUBLISH_FAILURE=1
+if install_codex_server_config; then
+  fail "Codex atomic-publish failure must propagate"
+fi
+MOCK_CODEX_PUBLISH_FAILURE=0
+cmp -s "$tmp_dir/publish-failure-original.toml" "$target" ||
+  fail "publish failure must leave the live config byte-identical"
+backup="${target}.bak.20260716120000"
+[ -f "$backup" ] || fail "publish failure must retain the recovery backup"
+cmp -s "$tmp_dir/publish-failure-original.toml" "$backup" ||
+  fail "publish-failure backup must preserve the original bytes"
+assert_eq "640" "$(_tabby_file_mode "$backup")" "publish-failure backup mode"
+shopt -s nullglob
+temps=("$target".tmp.*)
+shopt -u nullglob
+assert_eq "0" "${#temps[@]}" "failed publish must remove merge temp files"
+
+unset CODEX_HOME
 export HOME="$tmp_dir/no-codex-home"
 mkdir -p "$HOME"
-have() {
-  if [ "$1" = "codex" ]; then
-    return 1
-  fi
-  command -v "$1" >/dev/null 2>&1
-}
-install_codex_notifications
+MOCK_CODEX_AVAILABLE=0
+install_codex_server_config
 [ ! -e "$HOME/.codex" ] ||
   fail "installer must not create Codex config when Codex is unavailable"
 
-printf 'Codex notification install and backup checks passed\n'
+printf 'Codex server config install and backup checks passed\n'
 
 assert_file_contains "$TABBY_CONFIG" '  bell: off'
 assert_file_contains "$TMUX_CONFIG" 'set -gq allow-passthrough on'
