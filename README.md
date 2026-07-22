@@ -76,8 +76,15 @@ DOTFILES_SKIP_TABBY=1 ./install/ubuntu.sh
 通过 SSH 配置 Ubuntu 服务器时，使用统一的服务器入口：
 
 ```bash
-./install/ubuntu-user.sh
+(
+  set -e -o pipefail
+  repo_dir=/path/to/tabby_config
+  cd "$repo_dir"
+  ./install/ubuntu-user.sh
+)
 ```
+
+执行前把公开占位符 `/path/to/tabby_config` 替换为当前服务器上的实际仓库目录。
 
 该入口始终跳过 Tabby 软件、配置和插件，也不修改 `/etc/shells`。它会把 Ubuntu 的 Zsh 包解压到 `~/.local/opt/zsh`，把常用 CLI 工具安装到用户目录，并自动完成以下服务器配置：
 
