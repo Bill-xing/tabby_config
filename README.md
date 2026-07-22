@@ -86,13 +86,13 @@ DOTFILES_SKIP_TABBY=1 ./install/ubuntu.sh
 - 先复用已有 Docker；Docker 缺失时，有 sudo 权限则从官方仓库安装 Docker CE，无 sudo 权限则安装 Rootless Docker。
 - 将全局 Git 身份设置为 `Bill-xing <bill.xjm@gmail.com>`，不改变仓库级配置和其他全局键。
 - 按“当前代理环境变量 → Git 全局代理 → Clash `.env` → `127.0.0.1:7890`”探测代理，只把主机和端口写入共享的 `proxyon` / `proxyoff` alias。
-- 要求 Codex CLI 已经可用；安装并启用 Figma、Superpowers 插件，安装锁定版本的 Pretty Mermaid skill，并把 `config/codex/server.toml` 安全增量合并到现有 Codex 配置。
+- 要求 Codex CLI 已经可用；安装并启用 Figma、Superpowers 插件，安装锁定版本的 Pretty Mermaid skill，并把 `config/codex/server.toml` 安全增量合并到现有 Codex 配置。Pretty Mermaid 的渲染依赖需要 Node.js 与 npm；任一缺失时只安装 skill 源码并打印警告，之后安装 Node.js/npm 并重跑入口即可补齐依赖。
 
 仅在 sudo 可用且 Docker、`btop` 或 `htop` 缺失时，服务器入口会安装必要的系统包；无 sudo 时使用用户目录和 Rootless Docker。安装器可重复执行，复用已经可用的组件；必需步骤失败会返回非零状态，不会继续打印成功摘要。
 
 完整的首装、快速重跑、代理、Neovim 预热、验证与故障恢复流程见 [SSH 服务器快速环境配置指南](docs/server-quickstart.md)。安装器会复用可工作的本地工具和已处于锁定 commit 的插件；需要全部重装时才使用 `DOTFILES_FORCE_INSTALL=1`。
 
-安装内容：
+上面的 `./install/ubuntu.sh` 标准桌面入口安装内容：
 
 - `apt`: 基础构建工具、`git`、`curl`、`zsh`、`tmux`、`fzf`、`fd-find`、`ripgrep`、`jq`、`unzip` 等
 - Neovim: 官方最新 release 预编译包，安装到 `~/.local/opt/nvim`

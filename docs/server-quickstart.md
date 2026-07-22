@@ -153,8 +153,14 @@ export GITHUB_TOKEN='your-temporary-token'
 ### 3. 执行一次安装
 
 ```bash
-time ./install/ubuntu-user.sh 2>&1 | tee /tmp/server-bootstrap.log
+(
+  set -o pipefail
+  time ./install/ubuntu-user.sh 2>&1 | tee /tmp/server-bootstrap.log
+)
 ```
+
+子 shell 中的 `pipefail` 保证安装器失败时整条命令也返回非零状态，不会被成功退出的
+`tee` 掩盖；日志仍会保存在 `/tmp/server-bootstrap.log`。
 
 安装过程会自动完成：
 
@@ -170,14 +176,16 @@ time ./install/ubuntu-user.sh 2>&1 | tee /tmp/server-bootstrap.log
 | dotfiles | `~/.zshrc`、`~/.tmux.conf`、`~/.config/*` | 正确软链接直接保留 |
 | SSH Zsh 入口 | `~/.bashrc` 管理块 | 已存在时不重复追加 |
 | Conda / Miniforge | 复用现有 `conda`，否则 `~/miniforge3` | 可用时复用；始终设置 `auto_activate_base=false` |
-| `nvitop` | 独立 Conda 环境，经 `~/.local/bin` 暴露 | `--version` 成功时复用 |
-| `btop`、`htop` | sudo 分支使用 apt；无 sudo 分支使用独立 Conda 环境 | `--version` 成功时复用 |
+| `nvitop`、`btop`、`htop` | 有 sudo：`nvitop` 使用独立 Conda prefix，`btop`/`htop` 使用 apt；无 sudo：所有缺失项安装到同一个隔离 Conda prefix | `--version` 成功时复用 |
 | Docker | 复用现有安装，或安装系统 Docker CE / Rootless Docker | 已有可用客户端时不重装 |
 | Git 全局身份 | `~/.gitconfig` 的 `user.name`、`user.email` | 只更新这两个键 |
 | 代理 alias | `~/.config/tabby-config/*.sh` | 原子替换管理文件，启动文件管理块不重复 |
 | Codex | `${CODEX_HOME:-$HOME/.codex}` | 保留无关配置、插件和 skill |
 
-原有普通文件不会被静默覆盖。公共配置部署前会生成 `.bak.YYYYMMDDHHMMSS` 备份；原有机器专属 `.zshrc` 还会保留为 `~/.zshrc.local`。
+原有普通文件不会被静默覆盖，公共配置部署前会生成 `.bak.YYYYMMDDHHMMSS` 备份。
+如果原有 `~/.zshrc` 是普通文件且 `~/.zshrc.local` 尚不存在，安装器会先把机器专属内容
+复制到 `~/.zshrc.local`，再为原 `~/.zshrc` 生成时间戳备份；如果
+`~/.zshrc.local` 已存在，则保持它不变，只为原 `~/.zshrc` 生成时间戳备份。
 
 Docker 的三个分支如下：
 
@@ -186,6 +194,11 @@ Docker 的三个分支如下：
 - Docker 缺失且无 sudo：安装官方 Rootless Docker，配置用户级 systemd、`PATH` 与 `DOCKER_HOST`。
 
 Codex 配置阶段会安装并启用 `figma@openai-curated` 和 `superpowers@openai-curated`，再把锁定 commit 与文件校验和的 `pretty-mermaid` skill 安装到 `${CODEX_HOME:-$HOME/.codex}/skills/pretty-mermaid`。Codex 自带的 system skills 不会重复下载。`config/codex/server.toml` 以受管理键增量合并：已有项目信任、MCP、其他插件、注释和未知字段会保留；发生内容变化前创建时间戳备份，遇到无效或结构歧义 TOML 时保持原文件并返回失败。
+
+Pretty Mermaid 的渲染依赖需要可用的 Node.js 与 npm。两者都可用时，安装器通过锁文件
+执行 `npm ci`，并验证依赖版本、三个脚本的语法以及 `beautiful-mermaid` 导入；如果缺少
+任意一个，安装器只发布校验过的 skill 源码，打印“渲染依赖尚未就绪”的警告后继续，
+此时不能执行渲染。安装 Node.js/npm 后重跑入口即可补齐并验证运行依赖。
 
 ### 4. 重新连接 SSH
 
@@ -281,12 +294,49 @@ htop --version
 docker --version
 docker buildx version
 docker compose version
-codex plugin list | grep -E '^(figma|superpowers)@openai-curated'
+codex plugin list | awk '
+  $1 == "figma@openai-curated" && $2 == "installed," && $3 == "enabled" { found=1 }
+  END { exit(found ? 0 : 1) }
+'
+codex plugin list | awk '
+  $1 == "superpowers@openai-curated" && $2 == "installed," && $3 == "enabled" { found=1 }
+  END { exit(found ? 0 : 1) }
+'
 test -f "${CODEX_HOME:-$HOME/.codex}/skills/pretty-mermaid/SKILL.md"
 ```
 
 前两行应分别输出 `Bill-xing` 和 `bill.xjm@gmail.com`。如果刚安装系统 Docker，请在重新
 登录后检查；如果走 Rootless 分支，确认新 shell 中的 `DOCKER_HOST` 指向用户运行时目录。
+
+上面的 `SKILL.md` 检查只确认 Pretty Mermaid 源码存在。需要渲染时，再执行与安装器一致
+的运行依赖检查：
+
+```bash
+pretty_dir="${CODEX_HOME:-$HOME/.codex}/skills/pretty-mermaid"
+test -f "$pretty_dir/package-lock.json"
+test -f "$pretty_dir/node_modules/beautiful-mermaid/package.json"
+cmp -s config/codex/pretty-mermaid-package-lock.json "$pretty_dir/package-lock.json"
+node --eval '
+  const fs = require("fs");
+  const lock = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  const installed = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+  const wanted = lock.packages && lock.packages["node_modules/beautiful-mermaid"];
+  if (!wanted || typeof wanted.version !== "string" ||
+      installed.version !== wanted.version) process.exit(1);
+' "$pretty_dir/package-lock.json" \
+  "$pretty_dir/node_modules/beautiful-mermaid/package.json"
+for script in render.mjs batch.mjs themes.mjs; do
+  node --check "$pretty_dir/scripts/$script"
+done
+node --input-type=module --eval '
+  const { createRequire } = await import("node:module");
+  createRequire(process.argv[1])("beautiful-mermaid");
+' "$pretty_dir/package.json"
+unset pretty_dir
+```
+
+任一命令失败都表示渲染依赖未就绪；先安装 Node.js/npm，再重跑
+`./install/ubuntu-user.sh`，不要把只有 `SKILL.md` 的状态当成可渲染。
 
 代理 alias 可以这样检查：
 
@@ -352,7 +402,11 @@ tmux -L dotfiles-check kill-server
 
 第一条 powerline 命令应显示 session/window/pane 格式及主题颜色；第二条应不输出内容。
 
-### 确认 Tabby 未部署
+### 在原本没有 Tabby 的服务器上确认仍未部署
+
+下面的检查只适用于运行服务器入口前就没有安装或配置 Tabby 的账号。服务器入口会跳过
+Tabby，但不会删除用户原本已有的 Tabby 命令或配置，因此已有 Tabby 时不能用这个检查
+判断入口是否越界。
 
 ```bash
 if command -v tabby >/dev/null 2>&1 || [ -e "$HOME/.config/tabby" ]; then
