@@ -46,8 +46,8 @@
 ### 1. macOS
 
 ```bash
-cd /path/to/this/repo
-./install/macos.sh
+cd /path/to/this/repo &&
+  ./install/macos.sh
 ```
 
 安装内容：
@@ -61,8 +61,8 @@ cd /path/to/this/repo
 ### 2. Ubuntu
 
 ```bash
-cd /path/to/this/repo
-./install/ubuntu.sh
+cd /path/to/this/repo &&
+  ./install/ubuntu.sh
 ```
 
 纯 SSH 服务器不需要安装或部署 Tabby 时，使用：
@@ -105,8 +105,8 @@ DOTFILES_SKIP_TABBY=1 ./install/ubuntu.sh
 执行完成后建议：
 
 ```bash
-chsh -s "$(command -v zsh)"
-exec zsh
+chsh -s "$(command -v zsh)" &&
+  exec zsh
 ```
 
 ### 3. Windows + MSYS2
@@ -114,15 +114,16 @@ exec zsh
 先确保仓库位于 Windows 可访问路径，例如：
 
 ```powershell
-cd C:\path\to\repo
+Set-Location C:\path\to\repo
+if (-not $?) { exit 1 }
 powershell -ExecutionPolicy Bypass -File .\install\windows.ps1
 ```
 
 或者已经在 MSYS2 中时：
 
 ```bash
-cd /c/path/to/repo
-./install/windows-msys2.sh
+cd /c/path/to/repo &&
+  ./install/windows-msys2.sh
 ```
 
 安装内容：
@@ -272,21 +273,27 @@ Tabby 的通知链路可用。Tabby 插件属于本地运行态，按仓库隐�
 安装完成后，可以逐项检查：
 
 ```bash
-zsh -i -c exit
-tmux source-file ~/.tmux.conf
-nvim --version
-yazi --version
-lazygit --version
-# 仅桌面安装入口需要：tabby --version
+(
+  set -e -o pipefail
+  zsh -i -c exit
+  tmux source-file ~/.tmux.conf
+  nvim --version
+  yazi --version
+  lazygit --version
+  # 仅桌面安装入口需要：tabby --version
+)
 ```
 
 如果你已经在当前机器上更新过仓库配置，也可以重点检查这两项：
 
 ```bash
-tmux source-file ~/.tmux.conf
-~/.tmux/plugins/tmux-powerline/powerline.sh left
-~/.tmux/plugins/tmux-powerline/powerline.sh right
-yazi --debug >/dev/null
+(
+  set -e -o pipefail
+  tmux source-file ~/.tmux.conf
+  ~/.tmux/plugins/tmux-powerline/powerline.sh left
+  ~/.tmux/plugins/tmux-powerline/powerline.sh right
+  yazi --debug >/dev/null
+)
 ```
 
 左侧命令应输出包含 `#S:#I.#P`、`colour148` 和 `colour234` 的 tmux 格式串；右侧命令应不输出内容。

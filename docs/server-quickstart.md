@@ -8,18 +8,24 @@
 ./install/ubuntu-user.sh
 ```
 
+本文所有 `repo_dir=/path/to/tabby_config` 都是公开占位符，执行前必须替换为当前服务器上的
+实际仓库目录；所有 `./install/ubuntu-user.sh` 示例也都应从该目录执行。
+
 ## 快速结论
 
 已经克隆本仓库时，只需要执行：
 
 ```bash
-cd /path/to/tabby_config
-git switch server
-time ./install/ubuntu-user.sh
-exit
+(
+  set -e -o pipefail
+  repo_dir=/path/to/tabby_config
+  cd "$repo_dir"
+  git switch server
+  time ./install/ubuntu-user.sh
+)
 ```
 
-然后重新连接 SSH。交互终端会自动进入用户目录中的 Zsh；`scp`、`rsync` 和 `ssh host command` 等非交互连接仍使用 Bash。
+只有上面的命令整体返回 0 后，才退出并重新连接 SSH。交互终端会自动进入用户目录中的 Zsh；`scp`、`rsync` 和 `ssh host command` 等非交互连接仍使用 Bash。
 
 运行入口前必须已经安装可用的 Codex CLI：
 
@@ -92,41 +98,45 @@ python3  tar  tmux  unzip
 已经有仓库：
 
 ```bash
-cd /path/to/tabby_config
-git fetch origin
-git switch server
+repo_dir=/path/to/tabby_config
+cd "$repo_dir" &&
+  git fetch origin &&
+  git switch server
 ```
 
 全新克隆，已经配置 GitHub SSH key：
 
 ```bash
 git clone --branch server --single-branch \
-  git@github.com:Bill-xing/tabby_config.git
-cd tabby_config
+  git@github.com:Bill-xing/tabby_config.git &&
+  cd tabby_config
 ```
 
 没有配置 GitHub SSH key：
 
 ```bash
 git clone --branch server --single-branch \
-  https://github.com/Bill-xing/tabby_config.git
-cd tabby_config
+  https://github.com/Bill-xing/tabby_config.git &&
+  cd tabby_config
 ```
 
 ### 2. 用十秒钟检查网络
 
 ```bash
-curl -fsS --connect-timeout 5 https://api.github.com/rate_limit >/dev/null
-git ls-remote https://github.com/ohmyzsh/ohmyzsh.git HEAD >/dev/null
-echo "network ok"
+(
+  set -e -o pipefail
+  curl -fsS --connect-timeout 5 https://api.github.com/rate_limit >/dev/null
+  git ls-remote https://github.com/ohmyzsh/ohmyzsh.git HEAD >/dev/null
+  echo "network ok"
+)
 ```
 
 如果服务器只能通过代理访问 GitHub，先在当前 shell 中设置代理，再执行安装器：
 
 ```bash
-export http_proxy=http://127.0.0.1:PORT
-export https_proxy="$http_proxy"
-export all_proxy="$http_proxy"
+export http_proxy=http://127.0.0.1:PORT &&
+  export https_proxy="$http_proxy" &&
+  export all_proxy="$http_proxy"
 ```
 
 安装器会按以下优先级选择第一个有效代理：
@@ -154,7 +164,9 @@ export GITHUB_TOKEN='your-temporary-token'
 
 ```bash
 (
-  set -o pipefail
+  set -e -o pipefail
+  repo_dir=/path/to/tabby_config
+  cd "$repo_dir"
   time ./install/ubuntu-user.sh 2>&1 | tee /tmp/server-bootstrap.log
 )
 ```
@@ -202,16 +214,28 @@ Pretty Mermaid 的渲染依赖需要可用的 Node.js 与 npm。两者都可用�
 
 ### 4. 重新连接 SSH
 
+只在安装命令返回 0 后，从当前服务器 shell 退出：
+
 ```bash
 exit
+```
+
+然后在本地终端重新连接：
+
+```bash
 ssh your-server
 ```
 
 登录后检查：
 
 ```zsh
-echo "$ZSH_VERSION"
-echo "$SHELL"
+(
+  set -e -o pipefail
+  test -n "${ZSH_VERSION:-}"
+  test -n "${SHELL:-}"
+  echo "$ZSH_VERSION"
+  echo "$SHELL"
+)
 ```
 
 预期 `$SHELL` 为 `~/.local/bin/zsh`。由于账号没有权限把用户级 Zsh 写进 `/etc/shells`，系统账户的登录 shell 仍可能显示为 `/bin/bash`；这是设计行为。
@@ -247,9 +271,14 @@ nvim --headless \
 拉取分支后直接重跑即可：
 
 ```bash
-git switch server
-git pull --ff-only
-time ./install/ubuntu-user.sh
+(
+  set -e -o pipefail
+  repo_dir=/path/to/tabby_config
+  cd "$repo_dir"
+  git switch server
+  git pull --ff-only
+  time ./install/ubuntu-user.sh
+)
 ```
 
 安装器默认是幂等的：检查命令可用性、版本、锁定 commit、配置内容和软链接，不重复下载或追加已经正常的组件。
@@ -282,27 +311,33 @@ DOTFILES_SKIP_SSH_ZSH_HANDOFF=1 ./install/ubuntu-user.sh
 
 ## 安装后的完整验证
 
-以下命令只检查版本和本地状态，不会拉取容器镜像：
+把下面的 `/path/to/tabby_config` 替换为实际仓库目录。以下命令只检查版本和本地状态，
+不会拉取容器镜像；任一检查失败时，整个子 shell 返回非零状态：
 
 ```bash
-git config --global --get user.name
-git config --global --get user.email
-conda --version
-nvitop --version
-btop --version
-htop --version
-docker --version
-docker buildx version
-docker compose version
-codex plugin list | awk '
-  $1 == "figma@openai-curated" && $2 == "installed," && $3 == "enabled" { found=1 }
-  END { exit(found ? 0 : 1) }
-'
-codex plugin list | awk '
-  $1 == "superpowers@openai-curated" && $2 == "installed," && $3 == "enabled" { found=1 }
-  END { exit(found ? 0 : 1) }
-'
-test -f "${CODEX_HOME:-$HOME/.codex}/skills/pretty-mermaid/SKILL.md"
+(
+  set -e -o pipefail
+  repo_dir=/path/to/tabby_config
+  cd "$repo_dir"
+  git config --global --get user.name
+  git config --global --get user.email
+  conda --version
+  nvitop --version
+  btop --version
+  htop --version
+  docker --version
+  docker buildx version
+  docker compose version
+  codex plugin list | awk '
+    $1 == "figma@openai-curated" && $2 == "installed," && $3 == "enabled" { found=1 }
+    END { exit(found ? 0 : 1) }
+  '
+  codex plugin list | awk '
+    $1 == "superpowers@openai-curated" && $2 == "installed," && $3 == "enabled" { found=1 }
+    END { exit(found ? 0 : 1) }
+  '
+  test -f "${CODEX_HOME:-$HOME/.codex}/skills/pretty-mermaid/SKILL.md"
+)
 ```
 
 前两行应分别输出 `Bill-xing` 和 `bill.xjm@gmail.com`。如果刚安装系统 Docker，请在重新
@@ -313,7 +348,9 @@ test -f "${CODEX_HOME:-$HOME/.codex}/skills/pretty-mermaid/SKILL.md"
 
 ```bash
 (
-  set -e
+  set -e -o pipefail
+  repo_dir=/path/to/tabby_config
+  cd "$repo_dir"
   pretty_dir="${CODEX_HOME:-$HOME/.codex}/skills/pretty-mermaid"
   test -f "$pretty_dir/package-lock.json"
   test -f "$pretty_dir/node_modules/beautiful-mermaid/package.json"
@@ -337,70 +374,85 @@ test -f "${CODEX_HOME:-$HOME/.codex}/skills/pretty-mermaid/SKILL.md"
 )
 ```
 
-子 shell 中的 `set -e` 会让任一检查失败立即返回非零状态，同时不会把 `pretty_dir` 留在
-当前 shell。任一命令失败都表示渲染依赖未就绪；先安装 Node.js/npm，再重跑
+子 shell 中的 `set -e -o pipefail` 会让任一检查失败立即返回非零状态，同时不会把
+`repo_dir` 或 `pretty_dir` 留在当前 shell。任一命令失败都表示渲染依赖未就绪；先安装 Node.js/npm，再重跑
 `./install/ubuntu-user.sh`，不要把只有 `SKILL.md` 的状态当成可渲染。
 
 代理 alias 可以这样检查：
 
 ```bash
-type proxyon proxyoff
-proxyon
-printf 'HTTP proxy endpoint: %s\n' "$http_proxy"
-proxyoff
-test -z "${http_proxy:-}${https_proxy:-}${all_proxy:-}${GIT_SSH_COMMAND:-}"
+(
+  set -e -o pipefail
+  type proxyon proxyoff
+  _tabby_proxy_on
+  printf 'HTTP proxy endpoint: %s\n' "$http_proxy"
+  _tabby_proxy_off
+  test -z "${http_proxy:-}${https_proxy:-}${all_proxy:-}${GIT_SSH_COMMAND:-}"
+)
 ```
+
+这里在子 shell 中调用 alias 背后的函数；即使中途检查失败，也不会把代理变量留在当前
+登录 shell。
 
 不要把可能含环境专属信息的命令输出提交到仓库。
 
 ### 工具版本
 
 ```bash
-export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
-
-zsh --version
-tmux -V
-nvim --version | sed -n '1p'
-lazygit --version
-yazi --version
-tree-sitter --version
-fzf --version
-fd --version
-rg --version | sed -n '1p'
-bat --version
-delta --version
-eza --version | sed -n '1p'
-zoxide --version
-direnv version
-jq --version
+(
+  set -e -o pipefail
+  export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+  zsh --version
+  tmux -V
+  nvim --version | sed -n '1p'
+  lazygit --version
+  yazi --version
+  tree-sitter --version
+  fzf --version
+  fd --version
+  rg --version | sed -n '1p'
+  bat --version
+  delta --version
+  eza --version | sed -n '1p'
+  zoxide --version
+  direnv version
+  jq --version
+)
 ```
 
 ### 配置链接
 
 ```bash
-for path in \
-  "$HOME/.zshrc" \
-  "$HOME/.p10k.zsh" \
-  "$HOME/.tmux.conf" \
-  "$HOME/.config/tmux-powerline" \
-  "$HOME/.config/nvim" \
-  "$HOME/.config/yazi" \
-  "$HOME/.config/lazygit"; do
-  printf '%s -> %s\n' "$path" "$(readlink "$path")"
-done
+(
+  set -e -o pipefail
+  for path in \
+    "$HOME/.zshrc" \
+    "$HOME/.p10k.zsh" \
+    "$HOME/.tmux.conf" \
+    "$HOME/.config/tmux-powerline" \
+    "$HOME/.config/nvim" \
+    "$HOME/.config/yazi" \
+    "$HOME/.config/lazygit"; do
+    target="$(readlink "$path")"
+    printf '%s -> %s\n' "$path" "$target"
+  done
+)
 ```
 
 ### Yazi 与 tmux
 
 ```bash
-YAZI_CONFIG_HOME="$PWD/config/yazi" yazi --debug >/dev/null
-
-tmux -L dotfiles-check -f "$HOME/.tmux.conf" new-session -d -s verify
-tmux -L dotfiles-check display-message -p 'session=#{session_name}'
-tmux -L dotfiles-check kill-server
-
-~/.tmux/plugins/tmux-powerline/powerline.sh left
-~/.tmux/plugins/tmux-powerline/powerline.sh right
+(
+  set -e -o pipefail
+  repo_dir=/path/to/tabby_config
+  cd "$repo_dir"
+  YAZI_CONFIG_HOME="$repo_dir/config/yazi" yazi --debug >/dev/null
+  tmux -L dotfiles-check -f "$HOME/.tmux.conf" new-session -d -s verify
+  tmux -L dotfiles-check display-message -p 'session=#{session_name}'
+  tmux -L dotfiles-check kill-server
+  ~/.tmux/plugins/tmux-powerline/powerline.sh left
+  ~/.tmux/plugins/tmux-powerline/powerline.sh right
+)
 ```
 
 第一条 powerline 命令应显示 session/window/pane 格式及主题颜色；第二条应不输出内容。
@@ -412,11 +464,14 @@ Tabby，但不会删除用户原本已有的 Tabby 命令或配置，因此已�
 判断入口是否越界。
 
 ```bash
-if command -v tabby >/dev/null 2>&1 || [ -e "$HOME/.config/tabby" ]; then
-  echo "unexpected Tabby installation or config" >&2
-  exit 1
-fi
-echo "Tabby skipped"
+(
+  set -e -o pipefail
+  if command -v tabby >/dev/null 2>&1 || [ -e "$HOME/.config/tabby" ]; then
+    echo "unexpected Tabby installation or config" >&2
+    exit 1
+  fi
+  echo "Tabby skipped"
+)
 ```
 
 ### 确认非交互 SSH 未被 Zsh 接管
@@ -449,9 +504,14 @@ sudo 探测失败后，入口会把监控工具安装到独立 Conda 环境，�
 命令都能执行，再重跑服务器入口：
 
 ```bash
-codex --version
-codex plugin list
-./install/ubuntu-user.sh
+(
+  set -e -o pipefail
+  repo_dir=/path/to/tabby_config
+  cd "$repo_dir"
+  codex --version
+  codex plugin list
+  ./install/ubuntu-user.sh
+)
 ```
 
 ### GitHub API 返回 403 或 rate limit
@@ -461,10 +521,16 @@ codex plugin list
 需要全新安装时，可设置临时 `GITHUB_TOKEN` 或等待匿名额度恢复：
 
 ```bash
-export GITHUB_TOKEN='your-temporary-token'
-./install/ubuntu-user.sh
-unset GITHUB_TOKEN
+(
+  set -e -o pipefail
+  repo_dir=/path/to/tabby_config
+  cd "$repo_dir"
+  export GITHUB_TOKEN='your-temporary-token'
+  ./install/ubuntu-user.sh
+)
 ```
+
+token 只存在于子 shell 中；无论安装成功或失败，返回当前 shell 后都不会保留。
 
 ### 出现 `GLIBC_2.39 not found`
 
@@ -481,8 +547,13 @@ Yazi 与常用 Rust CLI 使用 `musl` Release；Tree-sitter CLI 在本机编译�
 确认使用的是本分支脚本，而不是手工执行默认特性的 `cargo install`：
 
 ```bash
-git branch --show-current
-rg -- '--no-default-features' install/ubuntu-user.sh
+(
+  set -e -o pipefail
+  repo_dir=/path/to/tabby_config
+  cd "$repo_dir"
+  git branch --show-current
+  rg -- '--no-default-features' install/ubuntu-user.sh
+)
 ```
 
 本脚本的 Tree-sitter 构建不启用 QuickJS 特性，不需要 `libclang`。当前服务器实测该精简构建约 24 秒。
@@ -492,8 +563,13 @@ rg -- '--no-default-features' install/ubuntu-user.sh
 确认链接指向当前分支，并运行调试检查：
 
 ```bash
-readlink "$HOME/.config/yazi"
-YAZI_CONFIG_HOME="$PWD/config/yazi" yazi --debug
+(
+  set -e -o pipefail
+  repo_dir=/path/to/tabby_config
+  cd "$repo_dir"
+  readlink "$HOME/.config/yazi"
+  YAZI_CONFIG_HOME="$repo_dir/config/yazi" yazi --debug
+)
 ```
 
 不要把旧版 `yazi.toml` 或 `keymap.toml` 从其他服务器覆盖回来。
@@ -503,8 +579,12 @@ YAZI_CONFIG_HOME="$PWD/config/yazi" yazi --debug
 检查管理块和用户级 Zsh：
 
 ```bash
-test -x "$HOME/.local/bin/zsh" && echo "zsh wrapper ok"
-rg -n 'tabby_config user-local zsh' "$HOME/.bashrc"
+(
+  set -e -o pipefail
+  test -x "$HOME/.local/bin/zsh"
+  echo "zsh wrapper ok"
+  rg -n 'tabby_config user-local zsh' "$HOME/.bashrc"
+)
 ```
 
 管理块只在同时满足“SSH 环境、输入输出为 TTY、用户级 Zsh 可执行”时切换。修改后应退出并重新连接，不要只运行 `source ~/.bashrc` 判断。
@@ -514,8 +594,13 @@ rg -n 'tabby_config user-local zsh' "$HOME/.bashrc"
 安装器会停止，以免覆盖未知内容。先把冲突目录改名保存，再重跑。例如：
 
 ```bash
-mv "$HOME/.oh-my-zsh" "$HOME/.oh-my-zsh.before-server-setup"
-./install/ubuntu-user.sh
+(
+  set -e -o pipefail
+  repo_dir=/path/to/tabby_config
+  cd "$repo_dir"
+  mv "$HOME/.oh-my-zsh" "$HOME/.oh-my-zsh.before-server-setup"
+  ./install/ubuntu-user.sh
+)
 ```
 
 确认新环境正常后，再手工比较旧目录中的个人内容。
@@ -545,7 +630,12 @@ Miniforge、独立监控环境、Rootless Docker 和 `${CODEX_HOME:-$HOME/.codex
 - 修改安装器后至少执行：
 
 ```bash
-bash -n bootstrap/*.sh bootstrap/server/*.sh bootstrap/user-local-zsh install/*.sh
-git diff --check
-./install/ubuntu-user.sh
+(
+  set -e -o pipefail
+  repo_dir=/path/to/tabby_config
+  cd "$repo_dir"
+  bash -n bootstrap/*.sh bootstrap/server/*.sh bootstrap/user-local-zsh install/*.sh
+  git diff --check
+  ./install/ubuntu-user.sh
+)
 ```
