@@ -518,6 +518,41 @@ for invalid_header in 'custom.' '.custom' 'custom..child'; do
     "fallback validation must reject invalid dotted table header: $invalid_header"
 done
 
+printf '"bad\001key" = true\n' >"$tmp_dir/fallback-control-key.toml"
+assert_fallback_rejected \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-control-key.toml" \
+  "fallback validation must reject raw control characters in quoted keys"
+
+printf '[custom."bad\001table"]\nvalue = true\n' \
+  >"$tmp_dir/fallback-control-header.toml"
+assert_fallback_rejected \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-control-header.toml" \
+  "fallback validation must reject raw control characters in table headers"
+
+printf 'custom_value = "bad\001value"\n' >"$tmp_dir/fallback-control-value.toml"
+assert_fallback_rejected \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-control-value.toml" \
+  "fallback validation must reject raw control characters in values"
+
+cat >"$tmp_dir/fallback-escaped-control-text.toml" <<'EOF'
+escaped_value = "safe\\u0001"
+"escaped\\u0001" = true
+EOF
+python3 "$tmp_dir/fallback_runner.py" \
+  "$MERGER" \
+  "$FRAGMENT" \
+  "$tmp_dir/fallback-escaped-control-text.toml" \
+  >"$tmp_dir/fallback-escaped-control-merged.toml"
+assert_file_contains \
+  "$tmp_dir/fallback-escaped-control-merged.toml" \
+  'escaped_value = "safe\\u0001"'
+assert_file_contains \
+  "$tmp_dir/fallback-escaped-control-merged.toml" \
+  '"escaped\\u0001" = true'
+
 printf 'custom_value true\n' >"$tmp_dir/fallback-missing-equals.toml"
 assert_fallback_rejected \
   "$FRAGMENT" \

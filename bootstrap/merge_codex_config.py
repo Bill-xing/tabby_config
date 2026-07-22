@@ -91,6 +91,23 @@ def validate_toml(text: str, label: str) -> None:
         raise MergeError(f"malformed {label}: {exc}") from exc
 
 
+def validate_fallback_characters(text: str, label: str) -> None:
+    for index, char in enumerate(text):
+        codepoint = ord(char)
+        forbidden = (
+            codepoint <= 0x08
+            or codepoint in (0x0B, 0x0C)
+            or 0x0E <= codepoint <= 0x1F
+            or codepoint == 0x7F
+        )
+        if forbidden:
+            line = text.count("\n", 0, index) + 1
+            raise MergeError(
+                f"malformed {label}: forbidden control character "
+                f"U+{codepoint:04X} on line {line}"
+            )
+
+
 def strip_line_ending(line: str) -> str:
     if line.endswith("\r\n"):
         return line[:-2]
@@ -657,6 +674,8 @@ def validate_fallback_document(document: Document, label: str) -> None:
 
 
 def parse_document(text: str, label: str) -> Document:
+    if tomllib is None:
+        validate_fallback_characters(text, label)
     validate_toml(text, label)
     lines = text.splitlines(keepends=True)
     headers: list[Header] = []
