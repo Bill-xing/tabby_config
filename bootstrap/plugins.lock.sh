@@ -34,3 +34,6 @@ export TABBY_OSC_NOTIFY_NAME="tabby-osc-notify"
 export TABBY_OSC_NOTIFY_VERSION="1.0.0"
 export TABBY_OSC_NOTIFY_TARBALL_URL="https://registry.npmjs.org/tabby-osc-notify/-/tabby-osc-notify-1.0.0.tgz"
 export TABBY_OSC_NOTIFY_SHA256="a48fad95d94768b683f273397d7d818c526de969b3247c430bd309b3b0bb36d8"
+
+export PRETTY_MERMAID_REPO="https://github.com/imxv/pretty-mermaid-skills.git"
+export PRETTY_MERMAID_REF="e33f086d3b5bcec9f28632e4bd9c348b02bb2278"
