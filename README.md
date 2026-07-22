@@ -73,13 +73,22 @@ DOTFILES_SKIP_TABBY=1 ./install/ubuntu.sh
 
 该模式保留完整 CLI 工具、Zsh、tmux、LazyVim、Lazygit 与 Yazi 流程，只跳过 Tabby 软件包和配置文件。
 
-如果 SSH 账号没有 `sudo` 权限，但系统已有 `cc`、`git`、`curl`、`python3`、`tmux`、`file`、`tar`、`unzip`、`apt-get` 和 `dpkg-deb`，可使用纯用户目录安装：
+通过 SSH 配置 Ubuntu 服务器时，使用统一的服务器入口：
 
 ```bash
 ./install/ubuntu-user.sh
 ```
 
-该入口把 Ubuntu 的 Zsh 包解压到 `~/.local/opt/zsh`，并把其余 CLI 工具安装到 `~/.local/bin`；为 LazyVim 构建兼容服务器 GLIBC 的 tree-sitter CLI 时，会按需安装最小 Rust 工具链。该模式固定跳过 Tabby，不修改系统软件包或 `/etc/shells`。
+该入口始终跳过 Tabby 软件、配置和插件，也不修改 `/etc/shells`。它会把 Ubuntu 的 Zsh 包解压到 `~/.local/opt/zsh`，把常用 CLI 工具安装到用户目录，并自动完成以下服务器配置：
+
+- 复用可用的 `conda`；缺失时校验下载并安装 Miniforge，同时设置 `auto_activate_base=false`。
+- 安装或复用 `nvitop`、`btop`、`htop`。
+- 先复用已有 Docker；Docker 缺失时，有 sudo 权限则从官方仓库安装 Docker CE，无 sudo 权限则安装 Rootless Docker。
+- 将全局 Git 身份设置为 `Bill-xing <bill.xjm@gmail.com>`，不改变仓库级配置和其他全局键。
+- 按“当前代理环境变量 → Git 全局代理 → Clash `.env` → `127.0.0.1:7890`”探测代理，只把主机和端口写入共享的 `proxyon` / `proxyoff` alias。
+- 要求 Codex CLI 已经可用；安装并启用 Figma、Superpowers 插件，安装锁定版本的 Pretty Mermaid skill，并把 `config/codex/server.toml` 安全增量合并到现有 Codex 配置。
+
+仅在 sudo 可用且 Docker、`btop` 或 `htop` 缺失时，服务器入口会安装必要的系统包；无 sudo 时使用用户目录和 Rootless Docker。安装器可重复执行，复用已经可用的组件；必需步骤失败会返回非零状态，不会继续打印成功摘要。
 
 完整的首装、快速重跑、代理、Neovim 预热、验证与故障恢复流程见 [SSH 服务器快速环境配置指南](docs/server-quickstart.md)。安装器会复用可工作的本地工具和已处于锁定 commit 的插件；需要全部重装时才使用 `DOTFILES_FORCE_INSTALL=1`。
 
@@ -202,11 +211,15 @@ macOS、Ubuntu 和 Windows/MSYS2 的标准桌面安装脚本会从锁定的 tarb
 
 由于 Tabby 退出时可能重写配置，部署前请关闭 Tabby。部署始终是“备份旧文件、再复制公开快照”，不会把应用正在写入的配置直接链接回 Git 工作树。
 
-### Codex 经 SSH/tmux 发送无声桌面通知
+### Codex 服务器配置与 SSH/tmux 桌面通知
 
-仓库会在检测到 `codex` 时，把 `config/codex/tabby-notifications.toml` 中的三个通知键
-安全合并到 `${CODEX_HOME:-$HOME/.codex}/config.toml`。原有模型、权限和项目设置会
-保留；内容发生变化时会先生成时间戳备份，重复运行且内容不变时不会重复备份。
+服务器入口要求预先安装 Codex CLI，并把完整的 `config/codex/server.toml` 安全增量
+合并到 `${CODEX_HOME:-$HOME/.codex}/config.toml`。受管理内容包括模型、推理、审批、
+沙箱与网络、TUI、Figma/Superpowers 插件状态等设置；已有的项目信任、MCP、其他插件、
+注释和未知字段会保留。内容发生变化时会先生成时间戳备份，重复运行且内容不变时不会
+重复备份；结构歧义或无效 TOML 会使安装器停止，而不是覆盖原文件。
+
+其中 TUI 通知仍使用以下设置：
 
 ```toml
 [tui]
@@ -215,7 +228,9 @@ notification_method = "osc9"
 notification_condition = "always"
 ```
 
-本地电脑还需要完成一次 Tabby 设置：
+Tabby 通知插件只由 macOS、Ubuntu 和 Windows/MSYS2 的标准**桌面**安装入口部署。
+`install/ubuntu-user.sh` 始终不安装、不修改服务器上的 Tabby 软件、配置或插件。若本地
+桌面终端选择 Tabby，还需要在本地电脑完成一次设置：
 
 标准 macOS、Ubuntu 和 Windows/MSYS2 安装入口会自动安装校验和锁定的 tabby-osc-notify@1.0.0；完成后重启 Tabby，并在操作系统设置中允许 Tabby 发送通知。
 
@@ -248,6 +263,7 @@ Tabby 的通知链路可用。Tabby 插件属于本地运行态，按仓库隐�
 - `tmux-continuum`
 - `erikw/tmux-powerline`
 - `tabby-osc-notify@1.0.0`
+- `pretty-mermaid`（锁定 commit 与文件校验和）
 
 如果后续你在本机更新了这些插件，想把新版本固定进仓库，需要更新对应 commit；对于 Tabby 插件，还要同步更新版本、tarball URL 和 SHA-256 校验和。
 
@@ -261,7 +277,7 @@ tmux source-file ~/.tmux.conf
 nvim --version
 yazi --version
 lazygit --version
-tabby --version
+# 仅桌面安装入口需要：tabby --version
 ```
 
 如果你已经在当前机器上更新过仓库配置，也可以重点检查这两项：
