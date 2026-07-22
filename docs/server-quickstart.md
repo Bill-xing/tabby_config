@@ -312,30 +312,33 @@ test -f "${CODEX_HOME:-$HOME/.codex}/skills/pretty-mermaid/SKILL.md"
 的运行依赖检查：
 
 ```bash
-pretty_dir="${CODEX_HOME:-$HOME/.codex}/skills/pretty-mermaid"
-test -f "$pretty_dir/package-lock.json"
-test -f "$pretty_dir/node_modules/beautiful-mermaid/package.json"
-cmp -s config/codex/pretty-mermaid-package-lock.json "$pretty_dir/package-lock.json"
-node --eval '
-  const fs = require("fs");
-  const lock = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-  const installed = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-  const wanted = lock.packages && lock.packages["node_modules/beautiful-mermaid"];
-  if (!wanted || typeof wanted.version !== "string" ||
-      installed.version !== wanted.version) process.exit(1);
-' "$pretty_dir/package-lock.json" \
-  "$pretty_dir/node_modules/beautiful-mermaid/package.json"
-for script in render.mjs batch.mjs themes.mjs; do
-  node --check "$pretty_dir/scripts/$script"
-done
-node --input-type=module --eval '
-  const { createRequire } = await import("node:module");
-  createRequire(process.argv[1])("beautiful-mermaid");
-' "$pretty_dir/package.json"
-unset pretty_dir
+(
+  set -e
+  pretty_dir="${CODEX_HOME:-$HOME/.codex}/skills/pretty-mermaid"
+  test -f "$pretty_dir/package-lock.json"
+  test -f "$pretty_dir/node_modules/beautiful-mermaid/package.json"
+  cmp -s config/codex/pretty-mermaid-package-lock.json "$pretty_dir/package-lock.json"
+  node --eval '
+    const fs = require("fs");
+    const lock = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    const installed = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+    const wanted = lock.packages && lock.packages["node_modules/beautiful-mermaid"];
+    if (!wanted || typeof wanted.version !== "string" ||
+        installed.version !== wanted.version) process.exit(1);
+  ' "$pretty_dir/package-lock.json" \
+    "$pretty_dir/node_modules/beautiful-mermaid/package.json"
+  for script in render.mjs batch.mjs themes.mjs; do
+    node --check "$pretty_dir/scripts/$script"
+  done
+  node --input-type=module --eval '
+    const { createRequire } = await import("node:module");
+    createRequire(process.argv[1])("beautiful-mermaid");
+  ' "$pretty_dir/package.json"
+)
 ```
 
-任一命令失败都表示渲染依赖未就绪；先安装 Node.js/npm，再重跑
+子 shell 中的 `set -e` 会让任一检查失败立即返回非零状态，同时不会把 `pretty_dir` 留在
+当前 shell。任一命令失败都表示渲染依赖未就绪；先安装 Node.js/npm，再重跑
 `./install/ubuntu-user.sh`，不要把只有 `SKILL.md` 的状态当成可渲染。
 
 代理 alias 可以这样检查：
