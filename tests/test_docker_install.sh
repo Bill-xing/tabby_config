@@ -85,6 +85,8 @@ SHADOW_DOCKER_VERSION_STATUS=0
 COMPOSE_STATUS=1
 BUILDX_STATUS=1
 INFO_STATUS=0
+SECURITY_OPTIONS='[]'
+CONTEXT_HOST='unix:///var/run/docker.sock'
 SUDO_INFO_STATUS=0
 ROOTLESS_INSTALL_STATUS=0
 USER_SYSTEMCTL_STATUS=0
@@ -164,6 +166,13 @@ docker_execute() {
       [ -e "$MOCK_BIN/buildx.ok" ] || return "$BUILDX_STATUS"
       ;;
     info) return "$INFO_STATUS" ;;
+    'info --format {{json .SecurityOptions}}')
+      [ "$INFO_STATUS" -eq 0 ] || return "$INFO_STATUS"
+      printf '%s\n' "$SECURITY_OPTIONS"
+      ;;
+    'context inspect --format {{.Endpoints.docker.Host}}')
+      printf '%s\n' "$CONTEXT_HOST"
+      ;;
     *) fail "unexpected docker invocation: $*" ;;
   esac
 }
@@ -489,7 +498,7 @@ reset_case() {
   CASE_STDOUT="$tmp_root/$name/stdout.log"
   CASE_STDERR="$tmp_root/$name/stderr.log"
   export HOME MOCK_BIN MOCK_DOCKER MOCK_OFFICIAL_DOCKER MOCK_ETC MOCK_SYSTEM_ROOT FETCH_URL_LOG FETCH_TARGET_LOG
-  unset XDG_STATE_HOME
+  unset XDG_STATE_HOME DOCKER_HOST
   mkdir -p "$HOME" "$MOCK_BIN" "$MOCK_ETC" "$(dirname "$MOCK_OFFICIAL_DOCKER")"
   : >"$FETCH_URL_LOG"
   : >"$FETCH_TARGET_LOG"
@@ -512,6 +521,8 @@ reset_case() {
   COMPOSE_STATUS=1
   BUILDX_STATUS=1
   INFO_STATUS=0
+  SECURITY_OPTIONS='[]'
+  CONTEXT_HOST='unix:///var/run/docker.sock'
   SUDO_INFO_STATUS=0
   ROOTLESS_INSTALL_STATUS=0
   USER_SYSTEMCTL_STATUS=0
@@ -598,6 +609,8 @@ expected_existing_calls=(
   "$MOCK_DOCKER" compose version
   "$MOCK_DOCKER" buildx version
   "$MOCK_DOCKER" info
+  "$MOCK_DOCKER" info --format '{{json .SecurityOptions}}'
+  "$MOCK_DOCKER" context inspect --format '{{.Endpoints.docker.Host}}'
 )
 assert_eq "${#expected_existing_calls[@]}" "${#NUL_ARGS[@]}" 'healthy existing Docker runs only report and capability probes'
 for docker_index in "${!expected_existing_calls[@]}"; do
@@ -610,6 +623,36 @@ assert_empty "$INSTALLER_LOG" 'existing Docker does not invoke the rootless inst
 assert_empty "$SYSTEMCTL_LOG" 'existing Docker does not manage services'
 assert_empty "$GITHUB_LOG" 'existing Docker does not resolve plugin releases'
 assert_eq false "$SERVER_DOCKER_REUSED_WITH_WARNINGS" 'healthy Docker has no warning state'
+
+reset_case existing-resets-result-state
+DOCKER_AVAILABLE=true
+COMPOSE_STATUS=0
+BUILDX_STATUS=0
+SERVER_DOCKER_REUSED_WITH_WARNINGS=true
+SERVER_DOCKER_NEEDS_RELOGIN=true
+SERVER_ROOTLESS_DOCKER=true
+SERVER_DOCKER_BIN=/stale/docker
+install_docker >/dev/null
+assert_eq false "$SERVER_DOCKER_REUSED_WITH_WARNINGS" 'existing probe resets stale warning state'
+assert_eq false "$SERVER_DOCKER_NEEDS_RELOGIN" 'existing probe resets stale relogin state'
+assert_eq false "$SERVER_ROOTLESS_DOCKER" 'system existing probe resets stale rootless state'
+assert_eq "$MOCK_DOCKER" "$SERVER_DOCKER_BIN" 'existing probe exports the selected Docker binary'
+
+for rootless_signal in security context environment; do
+  reset_case "existing-rootless-$rootless_signal"
+  DOCKER_AVAILABLE=true
+  COMPOSE_STATUS=0
+  BUILDX_STATUS=0
+  case "$rootless_signal" in
+    security) SECURITY_OPTIONS='["name=rootless"]' ;;
+    context) CONTEXT_HOST='unix:///run/user/1000/docker.sock' ;;
+    environment) DOCKER_HOST='unix:///run/user/1000/docker.sock'; export DOCKER_HOST ;;
+  esac
+  install_docker >/dev/null
+  assert_eq true "$SERVER_ROOTLESS_DOCKER" "existing rootless $rootless_signal signal is detected"
+  assert_eq 'unix:///run/user/1000/docker.sock' "$DOCKER_HOST" "existing rootless $rootless_signal signal selects the user socket"
+  assert_eq "$MOCK_DOCKER" "$SERVER_DOCKER_BIN" "existing rootless $rootless_signal signal retains the selected binary"
+done
 
 for missing_capability in compose buildx info; do
   reset_case "existing-warning-$missing_capability"
@@ -629,6 +672,8 @@ for missing_capability in compose buildx info; do
     "$MOCK_DOCKER" compose version
     "$MOCK_DOCKER" buildx version
     "$MOCK_DOCKER" info
+    "$MOCK_DOCKER" info --format '{{json .SecurityOptions}}'
+    "$MOCK_DOCKER" context inspect --format '{{.Endpoints.docker.Host}}'
   )
   assert_contains "$(<"$CASE_STDOUT")" 'Docker version 99.0.0, build fixture' "$missing_capability warning reuse reports the client version"
   assert_contains "$(<"$CASE_STDERR")" "$warning_name" "$missing_capability warning names the failed probe"
@@ -763,6 +808,20 @@ assert_contains "$systemctl_joined" '<user><show-environment>' 'rootless prerequ
 assert_contains "$systemctl_joined" '<user><enable><--now><docker>' 'rootless service is enabled and started'
 assert_empty "$SUDO_LOG" 'rootless branch never invokes apt or sudo'
 assert_temp_targets_removed
+
+rootless_fetch_count="$(wc -l <"$FETCH_URL_LOG")"
+rootless_systemctl_bytes="$(wc -c <"$SYSTEMCTL_LOG")"
+unset SERVER_DOCKER_BIN SERVER_ROOTLESS_DOCKER SERVER_DOCKER_NEEDS_RELOGIN
+unset SERVER_DOCKER_REUSED_WITH_WARNINGS DOCKER_HOST
+SECURITY_OPTIONS='["name=rootless"]'
+CONTEXT_HOST='unix:///run/user/1000/docker.sock'
+install_docker
+assert_eq "$MOCK_DOCKER" "${SERVER_DOCKER_BIN:-}" 'fresh rerun exports the reused rootless Docker binary'
+assert_eq true "${SERVER_ROOTLESS_DOCKER:-false}" 'fresh rerun redetects rootless Docker mode'
+assert_eq false "${SERVER_DOCKER_NEEDS_RELOGIN:-true}" 'fresh rootless rerun does not retain relogin state'
+assert_eq 'unix:///run/user/1000/docker.sock' "${DOCKER_HOST:-}" 'fresh rerun restores the rootless Docker socket'
+assert_eq "$rootless_fetch_count" "$(wc -l <"$FETCH_URL_LOG")" 'fresh rootless rerun does not redownload Docker assets'
+assert_eq "$rootless_systemctl_bytes" "$(wc -c <"$SYSTEMCTL_LOG")" 'fresh rootless rerun does not repeat user service mutation'
 
 for prerequisite in root uidmap gidmap subuid-missing subuid-small subgid-missing subgid-small systemd; do
   reset_case "prerequisite-$prerequisite"

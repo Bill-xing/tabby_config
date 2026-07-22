@@ -216,11 +216,39 @@ _docker_clear_incomplete() {
   }
 }
 
+_docker_rootless_socket() {
+  local uid
+
+  uid="$(docker_current_uid 2>/dev/null || true)"
+  [ -n "$uid" ] || return 1
+  printf 'unix:///run/user/%s/docker.sock\n' "$uid"
+}
+
+_docker_existing_is_rootless() {
+  local docker="$1" security_options context_host rootless_socket
+
+  security_options="$(
+    docker_execute "$docker" info --format '{{json .SecurityOptions}}' 2>/dev/null || true
+  )"
+  context_host="$(
+    docker_execute "$docker" context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true
+  )"
+  rootless_socket="$(_docker_rootless_socket 2>/dev/null || true)"
+
+  case "$security_options" in
+    *name=rootless*|*'"rootless"'*) return 0 ;;
+  esac
+  [ -n "$rootless_socket" ] || return 1
+  [ "${DOCKER_HOST:-}" = "$rootless_socket" ] || [ "$context_host" = "$rootless_socket" ]
+}
+
 _docker_probe_existing() {
-  local docker="$1" version warnings=false
+  local docker="$1" version warnings=false rootless_socket
 
   version="$(docker_execute "$docker" --version 2>/dev/null)" || return 1
   log "Reusing existing Docker client: $version"
+  SERVER_DOCKER_BIN="$docker"
+  export SERVER_DOCKER_BIN
 
   if ! docker_execute "$docker" compose version >/dev/null 2>&1; then
     warn 'Docker Compose is unavailable; keeping the existing Docker installation unchanged'
@@ -237,6 +265,15 @@ _docker_probe_existing() {
 
   SERVER_DOCKER_REUSED_WITH_WARNINGS="$warnings"
   export SERVER_DOCKER_REUSED_WITH_WARNINGS
+  if _docker_existing_is_rootless "$docker"; then
+    SERVER_ROOTLESS_DOCKER=true
+    rootless_socket="$(_docker_rootless_socket 2>/dev/null || true)"
+    if [ -n "$rootless_socket" ]; then
+      DOCKER_HOST="$rootless_socket"
+      export DOCKER_HOST
+    fi
+    export SERVER_ROOTLESS_DOCKER
+  fi
 }
 
 _docker_validate_ubuntu() {
@@ -794,9 +831,12 @@ _docker_install_rootless() {
 install_docker() {
   local docker='' marker marker_value branch=''
 
-  : "${SERVER_DOCKER_REUSED_WITH_WARNINGS:=false}"
-  : "${SERVER_DOCKER_NEEDS_RELOGIN:=false}"
-  : "${SERVER_ROOTLESS_DOCKER:=false}"
+  SERVER_DOCKER_REUSED_WITH_WARNINGS=false
+  SERVER_DOCKER_NEEDS_RELOGIN=false
+  SERVER_ROOTLESS_DOCKER=false
+  SERVER_DOCKER_BIN=''
+  export SERVER_DOCKER_REUSED_WITH_WARNINGS SERVER_DOCKER_NEEDS_RELOGIN
+  export SERVER_ROOTLESS_DOCKER SERVER_DOCKER_BIN
 
   marker="$(_docker_incomplete_marker_path)"
   if [ -e "$marker" ] || [ -L "$marker" ]; then
